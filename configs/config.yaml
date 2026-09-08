@@ -1,0 +1,115 @@
+# Drone-VGGT 3D Reconstruction Configuration
+
+video:
+  target_fps: 2.0                # Frame sampling rate for video extraction
+  max_frames: 100                # Maximum frames to extract
+  min_frame_gap: 3               # Minimum frame interval to prevent redundant consecutive frames
+  target_resolution: 518         # Standard resolution for VGGT model input (518x518)
+
+frame_selection:
+  sharpness_threshold: 40.0      # Minimum variance of Laplacian for sharpness
+  underexposure_threshold: 0.25  # Max allowable fraction of underexposed pixels (<12)
+  overexposure_threshold: 0.40   # Max allowable fraction of overexposed pixels (>245)
+  min_brightness: 15.0           # Minimum mean image brightness
+  similarity_threshold: 0.985    # Cosine similarity threshold to filter duplicates
+  sky_max_ratio: 0.75            # Max ratio of frame allowed to be pure sky
+  max_selected_frames: 24        # Maximum frames selected for 3D reconstruction (optimized for 4GB VRAM)
+
+image_refinement:
+  enabled: true
+  denoise: true                  # Conservative fast bilateral/NL-means denoising
+  denoise_h: 3.0                 # Mild filter strength
+  exposure_normalization: true   # Clip-limit adaptive histogram equalization (CLAHE)
+  clahe_clip_limit: 1.5
+  clahe_grid_size: 8
+  sharpening: true               # Mild unsharp mask
+  sharpen_strength: 0.25
+  sky_masking: false             # Conservative sky masking
+
+vggt:
+  model_name: "facebook/VGGT-1B"
+  local_weights_path: "models/VGGT-1B/model.pt"
+  use_mixed_precision: true      # FP16 / BF16 inference
+  batch_size: 1                  # Single scene batch
+  chunk_size: 32                 # Max frames per inference chunk on 4GB VRAM
+  enable_camera: true
+  enable_depth: true
+  enable_point: true
+  enable_track: false
+  unproject_depth: true          # Use camera + unprojected depth for higher geometric accuracy
+
+reconstruction:
+  confidence_threshold: 1.2      # Depth / point map confidence threshold (expp1 activation, >1.0)
+  use_depth_unprojection: true   # Depth unprojection vs direct point map
+
+pointcloud_filtering:
+  enabled: true
+  voxel_downsample: true
+  voxel_size: 0.02               # Voxel grid size in world units
+  statistical_filter: true
+  nb_neighbors: 20
+  std_ratio: 2.0                 # Standard deviation multiplier for outlier rejection
+  radius_filter: true
+  radius_nb_points: 10
+  radius: 0.08
+  min_bound_z: -100.0            # Optional spatial clipping bounds
+  max_bound_z: 100.0
+
+colmap:
+  enabled: true
+  export_binary: true            # Export cameras.bin, images.bin, points3D.bin
+  export_text: true              # Export cameras.txt, images.txt, points3D.txt
+
+mesh:
+  enabled: true
+  method: "poisson"              # "poisson" or "ball_pivoting"
+  poisson_depth: 8               # Octree depth for Poisson reconstruction
+  density_quantile: 0.1          # Trim low-density mesh artifacts
+
+paths:
+  raw_dir: "data/raw"
+  frames_dir: "data/frames"
+  selected_frames_dir: "data/selected_frames"
+  refined_frames_dir: "data/refined_frames"
+  outputs_dir: "outputs"
+
+depth_anything:
+  enabled: true
+  encoder: "vits"
+  input_size: 518
+  checkpoint_path: "models/depth_anything_v2/depth_anything_v2_vits.pth"
+  device: "auto"
+  use_fp16: true
+
+depth_alignment:
+  enabled: true
+  method: "robust_scale_shift"
+  min_depth: 0.1
+  max_depth: 100.0
+
+depth_consistency:
+  enabled: true
+  sigma: 0.5
+  max_diff: 5.0
+
+depth_fusion:
+  enabled: true
+  vggt_weight: 0.6
+  depth_anything_weight: 0.4
+
+depth_filtering:
+  enabled: true
+  confidence_threshold: 0.60
+  disagreement_rejection: true
+
+disaster_inspection:
+  enabled: true
+  person_detection:
+    enabled: true
+    confidence_threshold: 0.25
+    model_size: "n"
+  damage_detection:
+    enabled: true
+  hazard_detection:
+    enabled: true
+

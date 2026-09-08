@@ -1,0 +1,27 @@
+# Disaster Inspection & Hazard Assessment Configuration
+disaster_inspection:
+  enabled: true
+  person_detection:
+    enabled: true
+    confidence_threshold: 0.25
+    model_size: "n" # YOLOv8n ultra-lightweight
+  damage_detection:
+    enabled: true
+    texture_threshold: 800.0
+    depth_discontinuity_threshold: 0.15
+  hazard_detection:
+    flood:
+      enabled: true
+      water_coverage_threshold: 0.08
+    fire:
+      enabled: true
+      heat_hue_threshold: 0.015
+    debris:
+      enabled: true
+      edge_density_threshold: 45.0
+  geo_projection:
+    enabled: true
+    use_gps_if_available: true
+  incident_database:
+    sqlite_path: "outputs/incidents.db"
+    json_path: "outputs/incidents.json"

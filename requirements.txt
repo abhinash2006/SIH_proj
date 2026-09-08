@@ -1,0 +1,30 @@
+# Drone-VGGT Requirements
+# Compatible with PyTorch 2.6.0+cu124 on Python 3.10 - 3.12
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+torchaudio==2.6.0+cu124
+
+# Core Computer Vision & 3D Geometry
+opencv-python>=4.8.0
+open3d>=0.18.0
+trimesh>=4.0.0
+scipy>=1.11.0
+numpy>=1.26.0,<2.0.0
+matplotlib>=3.8.0
+Pillow>=10.0.0
+
+# Deep Learning Utilities & Model Hub
+huggingface_hub>=0.20.0
+safetensors>=0.4.0
+einops>=0.7.0
+timm>=0.9.0
+pyyaml>=6.0
+
+# Web Application & UI
+gradio>=4.0.0
+
+# Testing & Quality
+pytest>=7.4.0

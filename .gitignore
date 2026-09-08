@@ -1,0 +1,42 @@
+# Environment
+drone_vggt_env/
+env/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Model Checkpoints (large binary weights)
+models/VGGT-1B/*.pt
+models/VGGT-1B/*.bin
+models/VGGT-1B/*.safetensors
+*.pth
+*.pt
+
+# Data Archives & Large Raw Videos
+data/raw/videos/*.mp4
+data/raw/videos/*.mov
+data/raw/videos/*.avi
+data/raw/frames/
+data/raw/uav_sequence/
+
+# Outputs & Generated Point Clouds / Meshes
+outputs/
+*.ply
+*.obj
+*.splat
+*.ply.gz
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+data/raw/
+data/frames/
+data/selected_frames/
+*.mp4
+*.zip
