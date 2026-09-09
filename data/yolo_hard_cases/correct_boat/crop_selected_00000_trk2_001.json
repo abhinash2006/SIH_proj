@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00000.jpg",
+  "frame_idx": 0,
+  "track_id": 2,
+  "raw_yolo_class": "boat",
+  "raw_yolo_confidence": 0.37,
+  "validated_class": "BOAT",
+  "validation_confidence": 0.47,
+  "validation_evidence": "Boat predicted on dry structure (area=10925px, water overlap=0.0%); remapped to BUILDING. | Temporal track consistency overrode transient BUILDING -> BOAT (vote ratio: 1.00, 0 switches).",
+  "original_bbox": [
+    960,
+    484,
+    1075,
+    579
+  ],
+  "cropped_bbox": [
+    943,
+    470,
+    1092,
+    593
+  ],
+  "image_width": 1920,
+  "image_height": 1080,
+  "category": "correct_boat"
+}

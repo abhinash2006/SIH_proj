@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00005.jpg",
+  "frame_idx": 5,
+  "track_id": 24,
+  "raw_yolo_class": "boat",
+  "raw_yolo_confidence": 0.1237,
+  "validated_class": "UNCERTAIN_OBJECT",
+  "validation_confidence": 0.0619,
+  "validation_evidence": "Confidence 0.12 below class threshold 0.15 for boat.",
+  "original_bbox": [
+    1384,
+    440,
+    1404,
+    447
+  ],
+  "cropped_bbox": [
+    1381,
+    439,
+    1407,
+    448
+  ],
+  "image_width": 1920,
+  "image_height": 1080,
+  "category": "false_boat"
+}

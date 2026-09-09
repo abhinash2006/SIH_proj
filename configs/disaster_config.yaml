@@ -25,3 +25,17 @@ disaster_inspection:
   incident_database:
     sqlite_path: "outputs/incidents.db"
     json_path: "outputs/incidents.json"
+  class_thresholds:
+    person: 0.08
+    vehicle: 0.15
+    building: 0.15
+    boat: 0.15
+  context_validation:
+    enabled: true
+    vehicle_min_area: 250
+    vehicle_max_area: 12000
+    vehicle_aspect_ratio_range: [1.1, 4.0]
+    building_min_area: 3000
+    building_aspect_ratio_range: [0.4, 2.5]
+    boat_min_water_overlap: 0.15
+    temporal_min_vote_ratio: 0.60

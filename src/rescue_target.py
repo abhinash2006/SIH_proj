@@ -114,22 +114,35 @@ class ValidatedRescueTarget:
         Reason: "Person detected on elevated structure surrounded by floodwater with limited apparent access."
         """
         obs_count = len(self.source_frame_ids)
-        reproj_str = f"{self.reprojection_error:.1f} px" if self.reprojection_error is not None else "N/A"
+        reproj_1dp_str = f"{self.reprojection_error:.1f} px" if self.reprojection_error is not None else "N/A"
+        reproj_str = f"{self.reprojection_error:.2f} px" if self.reprojection_error is not None else "N/A"
+        best_reproj = self.evidence.get("best_reprojection_error_px", self.reprojection_error)
+        best_reproj_str = f"{best_reproj:.2f} px" if best_reproj is not None else "N/A"
+        num_3d = self.evidence.get("num_3d_candidates", 1 if "LOCALIZED" in self.localization_status else 0)
+        num_valid_reproj = self.evidence.get("num_valid_reprojections", 1 if (self.reprojection_error is not None and self.reprojection_error <= 25.0) else 0)
         ground_str = "LOW" if self.accessible_ground_score < 0.35 else ("MEDIUM" if self.accessible_ground_score < 0.70 else "HIGH")
         elev_str = "HIGH" if "ELEVATED" in self.elevation_context else ("LOW" if "GROUND" in self.elevation_context else "UNKNOWN")
         loc_str = "VALID" if "LOCALIZED" in self.localization_status else "UNCERTAIN"
         flood_pct = self.surrounding_flood_ratio * 100.0 if self.surrounding_flood_ratio <= 1.0 else self.surrounding_flood_ratio
+        val_status = self.evidence.get("detection_state", "POTENTIAL PERSON")
 
         return f"""### {self.target_id.upper()} (Track #{self.track_id})
 
+Validation status: **{val_status}**
 Detection confidence: {self.person_confidence * 100.0:.0f}%
 Frames observed: {obs_count}
+2D observations: {obs_count}
+3D candidates: {num_3d}
+Valid reprojections (<25px): {num_valid_reproj}
+Best reprojection error: {best_reproj_str}
+Mean reprojection error: {reproj_str}
 Flood proximity: {self.flood_proximity}
 Surrounding water: {flood_pct:.0f}%
 Accessible ground: {ground_str} ({self.accessible_ground_score:.2f})
 Elevation: {elev_str} ({self.elevation_context})
 3D localization: {loc_str} (Status: {self.localization_status})
-Reprojection: {reproj_str}
+Reprojection: {reproj_1dp_str}
+Local 3D position: [{self.location_3d[0]:.2f}, {self.location_3d[1]:.2f}, {self.location_3d[2]:.2f}]
 
 Priority: {self.rescue_priority}
 
@@ -140,17 +153,27 @@ Reason:
 
 def is_validated_rescue_target(obj: Any) -> bool:
     """
-    Validation gate: Returns True ONLY if obj is a ValidatedRescueTarget or
-    has been formally verified through the SAR validation pipeline with required fields.
-    Raw YOLO detections will return False.
+    Validation gate: Returns True ONLY if obj is an actual human rescue target
+    whose own 3D localization has passed the defined reprojection requirement (< 25.0 px)
+    and has confirmed flood isolation risk.
+    Raw YOLO detections or unverified/failed-reprojection detections will return False.
     """
     if isinstance(obj, ValidatedRescueTarget):
-        return True
+        # Strict rule: Must pass reprojection (< 25 px) AND localization == LOCALIZED_3D AND confirmed distress
+        if getattr(obj, "is_validated", False):
+            return True
+        reproj = obj.reprojection_error
+        is_reproj_valid = bool(reproj is not None and reproj <= 25.0)
+        is_loc_valid = bool(obj.localization_status == "LOCALIZED_3D")
+        is_distress = bool(obj.rescue_priority in ["HIGH", "MEDIUM"] or obj.isolation_score > 0.35 or obj.surrounding_flood_ratio > 0.15)
+        return is_reproj_valid and is_loc_valid and is_distress
     if isinstance(obj, dict):
-        required = [
-            "target_id", "track_id", "person_confidence", "source_frame_ids",
-            "bbox_2d", "center_2d", "location_3d", "localization_status",
-            "rescue_priority", "reason"
-        ]
-        return all(k in obj for k in required) and obj.get("is_validated_rescue_target", False)
+        if obj.get("is_validated_rescue_target", False):
+            return True
+        reproj = obj.get("reprojection_error_px", obj.get("reprojection_error"))
+        loc_stat = str(obj.get("location_status", obj.get("localization_status", "")))
+        prio = str(obj.get("rescue_priority", obj.get("priority", ""))).upper()
+        iso = float(obj.get("isolation_score", 0.0))
+        flood = float(obj.get("surrounding_flood_ratio", 0.0))
+        return bool(reproj is not None and float(reproj) <= 25.0 and "LOCALIZED" in loc_stat and (prio in ["HIGH", "MEDIUM"] or iso > 0.35 or flood > 0.15))
     return False

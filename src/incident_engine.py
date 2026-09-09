@@ -319,6 +319,11 @@ class IncidentEngine:
         source_frame_id: str = "frame_0000.jpg",
         flood_status: str = "NO_WATER"
     ) -> Dict[str, Any]:
+        val_cls = str(vehicle_data.get("final_class", vehicle_data.get("class_name", "VEHICLE"))).upper()
+        if "UNCERTAIN" in val_cls:
+            logger.info("[INCIDENT GATED] UNCERTAIN_OBJECT excluded from canonical vehicle incidents.")
+            return None
+
         pos = vehicle_data.get("point_3d")
         loc_3d = {"x": round(float(pos[0]), 2), "y": round(float(pos[1]), 2), "z": round(float(pos[2]), 2), "status": "LOCALIZED_3D"} if pos is not None else None
         is_flooded = "INUNDATION" in flood_status
@@ -328,7 +333,7 @@ class IncidentEngine:
         return IncidentEngine.create_incident(
             incident_type=inc_type,
             severity=severity,
-            confidence=float(vehicle_data.get("detection_confidence", 0.85)),
+            confidence=float(vehicle_data.get("validation_confidence", vehicle_data.get("detection_confidence", 0.85))),
             source_frame_id=source_frame_id,
             location_3d=loc_3d,
             flood_status=flood_status,

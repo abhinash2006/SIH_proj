@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00006.jpg",
+  "frame_idx": 6,
+  "track_id": 11,
+  "raw_yolo_class": "person",
+  "raw_yolo_confidence": 0.2757,
+  "validated_class": "PERSON",
+  "validation_confidence": 0.2757,
+  "validation_evidence": "Valid aerial person geometry (area=264px, aspect=1.83).",
+  "original_bbox": [
+    1677,
+    442,
+    1689,
+    464
+  ],
+  "cropped_bbox": [
+    1676,
+    439,
+    1690,
+    467
+  ],
+  "image_width": 1920,
+  "image_height": 1080,
+  "category": "correct_person"
+}

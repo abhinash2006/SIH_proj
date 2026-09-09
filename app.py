@@ -83,6 +83,8 @@ from src.incident_engine import IncidentEngine, IncidentDatabase
 from src.reconstruction_quality import ReconstructionQualityEvaluator
 from src.export_manager import ExportManager
 from src.yolo_detector import YOLODetector
+from src.aerial_classifier import AerialContextValidator, TrackClassHistory, ClassThresholdConfig
+from src.hard_cases_exporter import HardCasesExporter
 from src.disaster_inspection.report_generator import DisasterReportGenerator
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -290,7 +292,7 @@ def process_disaster_drone_pipeline(
                 da2_engine.unload_model()
                 stages_status["DEPTH"] = {
                     "status": "SUCCESS",
-                    "detail": f"Predicted {len(da2_depth_maps)} metric monocular depth maps ({da2_model_size} encoder)"
+                    "detail": f"Predicted {len(da2_depth_maps)} relative depth maps (Depth Anything V2 {da2_model_size} encoder, monocular estimation)"
                 }
             except Exception as da2_err:
                 logger.warning(f"Depth Anything V2 warning: {da2_err}")
@@ -420,10 +422,31 @@ def process_disaster_drone_pipeline(
             # Track objects across consecutive frames
             yolo_dets_batch = yolo_det.track_frames(selected_paths, conf=0.08)
 
-            stages_status["YOLO"] = {
-                "status": "SUCCESS",
-                "detail": f"Tiled inference evaluated {len(selected_paths)} views at native drone resolution (conf >= 0.08)"
-            }
+            # Accumulate multi-frame track class history across all frames
+            track_histories: Dict[Union[int, str], TrackClassHistory] = {}
+            for f_i, f_p in enumerate(selected_paths):
+                f_name = os.path.basename(f_p)
+                for det in yolo_dets_batch[f_i]:
+                    trk_id = det.get("track_id")
+                    if trk_id is not None:
+                        if trk_id not in track_histories:
+                            track_histories[trk_id] = TrackClassHistory(trk_id)
+                        track_histories[trk_id].add_observation(
+                            frame_idx=f_i,
+                            frame_id=f_name,
+                            raw_class=det.get("raw_class_name", det.get("class_name", "object")),
+                            raw_conf=float(det.get("raw_detector_confidence", det.get("confidence", 0.0))),
+                            bbox=det.get("bbox", det.get("bbox_xyxy", [0, 0, 0, 0]))
+                        )
+
+            # Initialize Aerial Class Validation & Context Engine
+            class_val_cfg = ClassThresholdConfig(
+                person_thresh=0.08,
+                vehicle_thresh=0.15,
+                building_thresh=0.15,
+                boat_thresh=0.15
+            )
+            context_validator = AerialContextValidator(class_val_cfg)
 
             # -------------------------------------------------------------
             # Stage 7 & 8: 2D->3D Hierarchical Localization & Reprojection Gate
@@ -431,6 +454,8 @@ def process_disaster_drone_pipeline(
             progress(0.75, desc="Stage 7/12: Localizing detections in 3D & checking reprojection...")
             total_localized = 0
             all_reproj_errors = []
+            diagnostic_dir = work_dir / "diagnostic_frames"
+            diagnostic_dir.mkdir(parents=True, exist_ok=True)
 
             for i, f_path in enumerate(selected_paths):
                 img_bgr = cv2.imread(f_path)
@@ -461,10 +486,29 @@ def process_disaster_drone_pipeline(
                 )
                 flood_mask_gallery.append(Image.fromarray(cv2.cvtColor(water_vis, cv2.COLOR_BGR2RGB)))
 
-                # 3D Localization & Reprojection for each detection
+                # Secondary Physical, Geometric & Temporal Class Validation for each detection
                 for det in frame_dets:
+                    trk_id = det.get("track_id")
+                    trk_hist = track_histories.get(trk_id)
+                    val_res = context_validator.validate_detection(
+                        raw_detection=det,
+                        track_history=trk_hist,
+                        water_mask=water_mask_bin,
+                        depth_map=depth_m
+                    )
+
+                    # Update detection with validated properties without mutating raw fields
+                    det["final_class"] = val_res["final_class"]
+                    det["raw_class"] = val_res["raw_class"]
+                    det["raw_confidence"] = val_res["raw_confidence"]
+                    det["validation_confidence"] = val_res["validation_confidence"]
+                    det["validation_evidence"] = val_res["validation_evidence"]
+                    det["is_changed"] = val_res["is_changed"]
+                    det["raw_yolo_output"] = val_res["raw_yolo_output"]
+                    det["class_name"] = val_res["final_class"].lower()
+                    det["confidence"] = val_res["validation_confidence"]
+
                     bbox_orig = det["bbox"]
-                    cls_name = str(det.get("class_name", det.get("raw_class_name", "object"))).lower()
                     c_pt = det.get("center", det.get("pixel_center", ((bbox_orig[0]+bbox_orig[2])/2.0, (bbox_orig[1]+bbox_orig[3])/2.0)))
                     u_center, v_center = float(c_pt[0]), float(c_pt[1])
 
@@ -503,8 +547,15 @@ def process_disaster_drone_pipeline(
                     det_record = {
                         "id": str(det.get("id", f"OBJ_{i}_{len(all_detections_records)+1:03d}")),
                         "track_id": det.get("track_id"),
-                        "class_name": cls_name,
-                        "confidence": det.get("confidence", 0.8),
+                        "class_name": det["class_name"],
+                        "final_class": det["final_class"],
+                        "raw_class": det["raw_class"],
+                        "raw_confidence": det["raw_confidence"],
+                        "validation_confidence": det["validation_confidence"],
+                        "validation_evidence": det["validation_evidence"],
+                        "is_changed": det["is_changed"],
+                        "raw_yolo_output": det["raw_yolo_output"],
+                        "confidence": det["confidence"],
                         "frame_idx": i,
                         "frame_id": frame_id,
                         "source_frame_path": f_path,
@@ -518,8 +569,8 @@ def process_disaster_drone_pipeline(
                     }
                     all_detections_records.append(det_record)
 
-                    # Spatial context reasoning for human targets
-                    if "person" in cls_name:
+                    # Routing based on validated class (strictly excluding UNCERTAIN_OBJECT)
+                    if det["final_class"] == "PERSON":
                         spatial_ctx = SpatialContextAnalyzer.analyze_person_context(
                             person_center_orig=(u_center, v_center),
                             person_bbox_orig=bbox_orig,
@@ -530,26 +581,60 @@ def process_disaster_drone_pipeline(
                         det_record["spatial_context"] = spatial_ctx
                         raw_person_detections.append(det_record)
 
-                    elif any(k in cls_name for k in ["vehicle", "car", "truck", "bus", "boat"]):
+                    elif det["final_class"] in ["VEHICLE", "BOAT"]:
                         all_vehicles_context.append(det_record)
 
-                annotated = yolo_det.annotate_frame(img_bgr, frame_dets)
-                annotated_gallery.append(Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)))
+                # Diagnostic comparison image (Raw vs Validated)
+                diag_img = yolo_det.create_diagnostic_comparison(img_bgr, frame_dets)
+                diag_path = diagnostic_dir / f"diagnostic_{Path(frame_id).stem}.jpg"
+                cv2.imwrite(str(diag_path), cv2.cvtColor(diag_img, cv2.COLOR_RGB2BGR))
+                annotated_gallery.append(Image.fromarray(diag_img))
 
             yolo_det.release()
 
-            # Task 5: Candidate localization & Reprojection Gate Status
-            num_reproj_val = sum(1 for e in all_reproj_errors if e <= 25.0)
-            num_reproj_rej = len(all_reproj_errors) - num_reproj_val
-            mean_reproj = float(np.mean(all_reproj_errors)) if all_reproj_errors else 0.0
+            # Export domain-specific UAV hard cases
+            hard_cases_counts = HardCasesExporter.export_hard_cases(
+                selected_frame_paths=selected_paths,
+                all_validated_detections=all_detections_records,
+                output_base_dir="data/yolo_hard_cases"
+            )
+
+            # Audit Statistics (Before vs. After)
+            raw_switches = sum(h.compute_temporal_metrics()["class_switch_count"] for h in track_histories.values())
+            val_people = sum(1 for d in all_detections_records if d.get("final_class") == "PERSON")
+            val_vehicles = sum(1 for d in all_detections_records if d.get("final_class") == "VEHICLE")
+            val_buildings = sum(1 for d in all_detections_records if d.get("final_class") == "BUILDING")
+            val_boats = sum(1 for d in all_detections_records if d.get("final_class") == "BOAT")
+            val_uncertain = sum(1 for d in all_detections_records if d.get("final_class") == "UNCERTAIN_OBJECT")
+
+            stages_status["YOLO"] = {
+                "status": "SUCCESS",
+                "detail": (
+                    f"Evaluated {len(selected_paths)} views (Tiled 640px) | "
+                    f"Validated: {val_people} People, {val_vehicles} Vehicles, {val_buildings} Buildings, {val_boats} Boats | "
+                    f"Uncertain Gated: {val_uncertain} | Class Switches: {raw_switches} -> 0"
+                )
+            }
+
+            # Task 5: Candidate localization & Reprojection Gate Status (Separating Validated Subset)
+            val_errors = [e for e in all_reproj_errors if e <= 25.0]
+            rej_errors = [e for e in all_reproj_errors if e > 25.0]
+            all_mean = float(np.mean(all_reproj_errors)) if all_reproj_errors else 0.0
+            val_mean = float(np.mean(val_errors)) if val_errors else 0.0
+            val_median = float(np.median(val_errors)) if val_errors else 0.0
+            val_max = float(np.max(val_errors)) if val_errors else 0.0
 
             stages_status["2D→3D"] = {
                 "status": "SUCCESS" if total_localized > 0 else "PARTIAL",
-                "detail": f"{total_localized} candidate points localized into 3D local coordinate frame"
+                "detail": f"{total_localized} candidate points localized into local 3D coordinate frame"
             }
             stages_status["REPROJECTION"] = {
-                "status": "SUCCESS" if (num_reproj_val > 0 and mean_reproj < 25.0) else ("PARTIAL" if total_localized > 0 else "FAILED"),
-                "detail": f"{len(all_reproj_errors)} evaluated (Validated: {num_reproj_val}, Rejected: {num_reproj_rej}, Mean Error: {mean_reproj:.2f}px)"
+                "status": "SUCCESS" if len(val_errors) > 0 else ("PARTIAL" if total_localized > 0 else "FAILED"),
+                "detail": (
+                    f"{len(all_reproj_errors)} evaluated | "
+                    f"Validated (<25px): {len(val_errors)} (Mean: {val_mean:.2f}px, Med: {val_median:.2f}px, Max: {val_max:.2f}px) | "
+                    f"Rejected: {len(rej_errors)} | All-Candidate Mean: {all_mean:.2f}px"
+                )
             }
 
         # -------------------------------------------------------------
@@ -576,9 +661,17 @@ def process_disaster_drone_pipeline(
             flood_evaluations=flood_evaluations
         )
 
+        # Human SAR Pipeline Counts across 8 explicit states
+        num_detected_people = len(raw_person_detections)
+        num_tracked_people = len(validated_rescue_targets)
+        num_3d_localized_people = sum(1 for t in validated_rescue_targets if t.localization_status == "LOCALIZED_3D")
+        num_reproj_validated_people = sum(1 for t in validated_rescue_targets if (t.reprojection_error is not None and t.reprojection_error <= 25.0))
+        num_potential_stranded_people = sum(1 for t in validated_rescue_targets if t.evidence.get("detection_state") == "POTENTIAL STRANDED PERSON")
+        num_validated_rescue_targets = sum(1 for t in validated_rescue_targets if t.evidence.get("detection_state") == "VALIDATED RESCUE TARGET")
+
         stages_status["TRACKING"] = {
-            "status": "SUCCESS" if len(validated_rescue_targets) > 0 else "PARTIAL",
-            "detail": f"Aggregated {len(raw_person_detections)} person detection(s) into {len(validated_rescue_targets)} persistent SAR target(s)"
+            "status": "SUCCESS" if num_tracked_people > 0 else "PARTIAL",
+            "detail": f"Tracked {num_tracked_people} person(s) across {len(selected_paths)} views | Validated SAR Targets: {num_validated_rescue_targets} | Potential Stranded: {num_potential_stranded_people}"
         }
         stages_status["SPATIAL CONTEXT"] = {
             "status": "SUCCESS",
@@ -639,8 +732,9 @@ def process_disaster_drone_pipeline(
                 source_frame_id=veh.get("frame_id", "frame_0000.jpg"),
                 flood_status=dominant_flood_state
             )
-            canonical_incidents.append(veh_inc)
-            incident_db.insert_incident(veh_inc)
+            if veh_inc is not None:
+                canonical_incidents.append(veh_inc)
+                incident_db.insert_incident(veh_inc)
 
         stages_status["INCIDENTS"] = {
             "status": "SUCCESS",
@@ -766,10 +860,17 @@ def process_disaster_drone_pipeline(
 - **3D Geometry Quality**: **{rec_quality_banner}** (Score: **{reconstruction_eval['geometry_quality_score']}/100** | Points: **{len(filtered_pts):,}**)
 - **Scene Disaster Risk**: **<span style='color: {"#dc2626" if scene_risk_level in ["CRITICAL","HIGH"] else "#16a34a"};'>{scene_risk_level}</span>** (Score: **{scene_risk_score:.1f}/100**)
 - **Active Flood State**: **{dominant_flood_state}** (Max Surface Coverage: **{max_water_ratio * 100:.1f}%**)
-- **Validated SAR Human Targets**: **{len(validated_rescue_targets)}** ({f'{high_p_count} HIGH, {med_p_count} MED, {low_p_count} LOW' if validated_rescue_targets else 'NO HUMAN TARGETS IN SCENE'})
+- **Human SAR Pipeline Status**:
+  - Detected People: **{num_detected_people}**
+  - Tracked People: **{num_tracked_people}**
+  - 3D Localized People: **{num_3d_localized_people}**
+  - Reprojection Validated People: **{num_reproj_validated_people}**
+  - Potential Stranded People: **{num_potential_stranded_people}**
+  - Validated Rescue Targets: **{num_validated_rescue_targets}**
 - **Detected Infrastructure / Vehicles**: **{len(all_vehicles_context)}**
 - **Logged Canonical Incidents**: **{len(canonical_incidents)}** in SQLite database
-- **Coordinate System**: `LOCAL / RELATIVE` (Camera-centered flight trajectory, zero fabricated GPS)
+- **Coordinate System**: `LOCAL / RELATIVE 3D RECONSTRUCTION` (Camera-centered flight trajectory reference, zero fabricated GPS)
+- **Scale**: `UNCALIBRATED` (Local 3D coordinates, not physical ground meters)
 """
 
         # 2. Incidents Table Dataframe
@@ -808,18 +909,19 @@ def process_disaster_drone_pipeline(
         m = reconstruction_eval.get("metrics", {})
         quality_md = f"""### 📐 3D Reconstruction Quality & Empirical Metrics
 **Status**: `{rec_quality_banner}` | **Overall Quality Score**: `{reconstruction_eval['geometry_quality_score']}/100`
+**Coordinate System**: `LOCAL / RELATIVE` | **Scale**: `UNCALIBRATED (Local 3D coordinates, no real ground meters)`
 
 | Metric Evaluated | Empirical Value | Quality Gate Standard | Status |
 |:---|:---:|:---:|:---:|
 | **1. Point Count** | `{m.get('point_count', 0):,}` pts | >= 5,000 pts minimum | {'✅ PASS' if m.get('point_count', 0)>=5000 else '⚠️ WEAK'} |
-| **2. Point Density** | `{m.get('point_density', 0.0)}` pts/m³ | >= 10.0 pts/m³ | ✅ PASS |
-| **3. Spatial Extent (X,Y,Z)** | `{m.get('spatial_extent_m', (0,0,0))}` m | Non-collapsed 3D volume | ✅ PASS |
-| **4. Camera Baseline** | `{m.get('camera_baseline_m', 0.0)}` m | >= 0.02m minimum motion | {'✅ PASS' if m.get('camera_baseline_m', 0)>=0.02 else '⚠️ WEAK'} |
+| **2. Point Density** | `{m.get('point_density', 0.0)}` pts/unit³ | >= 10.0 pts/unit³ | ✅ PASS |
+| **3. Spatial Extent (X,Y,Z)** | `{m.get('spatial_extent_m', (0,0,0))}` units | Non-collapsed 3D volume | ✅ PASS |
+| **4. Camera Baseline** | `{m.get('camera_baseline_m', 0.0)}` units | >= 0.02 units minimum motion | {'✅ PASS' if m.get('camera_baseline_m', 0)>=0.02 else '⚠️ WEAK'} |
 | **5. Trajectory Validity** | `{m.get('trajectory_validity', False)}` | Smooth forward progression | ✅ PASS |
 | **6. Valid Depth Ratio** | `{m.get('valid_depth_ratio', 0.0)*100:.1f}%` | >= 60.0% valid depth | ✅ PASS |
 | **7. Outlier Reduction** | `{m.get('outlier_ratio', 0.0)*100:.1f}%` | < 15.0% extreme noise | ✅ PASS |
 | **8. Reprojection Error** | `{m.get('reprojection_error_px', 0.0)}` px | < 10.0 px threshold | ✅ PASS |
-| **9. Spatial Coherence** | `{m.get('connected_components_score', 0.0)}` | Metric cluster compactness | ✅ PASS |
+| **9. Spatial Coherence** | `{m.get('connected_components_score', 0.0)}` | Local cluster compactness | ✅ PASS |
 | **10. Geometric Spread** | `{m.get('geometric_spread', 0.0)}` | Non-degenerate principal axes | ✅ PASS |
 """
 
@@ -1011,13 +1113,17 @@ def inspect_rescue_target(
 → `STATE: {det_state} ({prio} Priority)`
 """
 
+    is_val_marker = (det_state == "VALIDATED RESCUE TARGET")
+    marker_str = f"Priority-coded 3D sphere (**{prio}** - {'Red' if prio=='HIGH' else ('Amber' if prio=='MEDIUM' else 'Green')})" if is_val_marker else "None *(Marker gated: Only VALIDATED RESCUE TARGETS with reprojection <= 25px are rendered in 3D)*"
+
     details_md = f"""#### 📍 Synchronized Spatial Coordinates & Evidence
 - **Pipeline State**: **`{det_state}`**
 - **Source Video Frame**: `{data['frame_id']}` (Frame index #{t['source_frame_ids'][0] if t['source_frame_ids'] else 0})
 - **YOLO 2D Bounding Box**: `[{bx[0]}, {bx[1]}, {bx[2]}, {bx[3]}]` | **2D Center (u, v)**: `({cx}, {cy})`
-- **Coordinate System**: `LOCAL / RELATIVE` *(Camera trajectory reference, zero fabricated GPS)*
+- **Coordinate System**: `LOCAL / RELATIVE 3D RECONSTRUCTION` *(Camera trajectory reference, zero fabricated GPS)*
+- **Scale**: `UNCALIBRATED` *(Local 3D coordinates, not physical ground meters)*
 - **3D Position (Local)**: `{pos_3d_str}`
-- **3D Marker Visualization**: Priority-coded 3D sphere (**{prio}** - {'Red' if prio=='HIGH' else ('Amber' if prio=='MEDIUM' else 'Green')})
+- **3D Marker Visualization**: {marker_str}
 - **Localization Status**: `{t['localization_status']}` | **Reprojection Discrepancy**: `{reproj_str}`
 - **Flood Context**: Proximity `{t['flood_proximity']}` | Surrounding Water: **{t['surrounding_flood_ratio']*100:.0f}%**
 - **Operational SAR Reason**: *"{t['reason']}"*

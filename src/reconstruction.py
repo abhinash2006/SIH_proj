@@ -118,6 +118,9 @@ class PointCloudReconstructor:
 
         for obj in objects_3d:
             if isinstance(obj, ValidatedRescueTarget):
+                if not is_validated_rescue_target(obj):
+                    logger.info(f"[RESCUE MARKER GATED] Target {obj.target_id} skipped: Not a VALIDATED RESCUE TARGET (reprojection error > 25px or unlocalized).")
+                    continue
                 pos = obj.location_3d
                 priority = obj.rescue_priority
                 cls_name = "person"
@@ -126,7 +129,7 @@ class PointCloudReconstructor:
                 # Enforcement: If person, verify it is a validated rescue target
                 if "person" in cls_name or "victim" in cls_name:
                     if not is_validated_rescue_target(obj):
-                        logger.warning(f"[RESCUE MARKER BLOCKED] Object {obj.get('id', 'N/A')} rejected: Raw YOLO detection alone cannot generate a rescue marker.")
+                        logger.info(f"[RESCUE MARKER BLOCKED] Object {obj.get('id', 'N/A')} rejected: Raw YOLO detection or unvalidated reprojection cannot generate a rescue marker.")
                         continue
                 pos = obj.get("point_3d", obj.get("location_3d"))
                 priority = str(obj.get("priority", obj.get("rescue_priority", "LOW"))).upper()

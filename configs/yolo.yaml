@@ -14,3 +14,23 @@ yolo:
   person_min_size: 10
   localization_window: 5
   reprojection_threshold: 30.0
+
+  class_thresholds:
+    person: 0.08
+    vehicle: 0.15
+    building: 0.15
+    boat: 0.15
+
+  context_validation:
+    enabled: true
+    person_min_area: 10
+    person_max_area: 3500
+    person_aspect_ratio_max: 8.0
+    vehicle_min_area: 250
+    vehicle_max_area: 12000
+    vehicle_aspect_ratio_range: [1.1, 4.0]
+    building_min_area: 3000
+    building_aspect_ratio_range: [0.4, 2.5]
+    boat_min_water_overlap: 0.15
+    temporal_min_vote_ratio: 0.60
+    temporal_allow_switch_threshold: 0.30

@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00003.jpg",
+  "frame_idx": 3,
+  "track_id": 31,
+  "raw_yolo_class": "boat",
+  "raw_yolo_confidence": 0.1909,
+  "validated_class": "BUILDING",
+  "validation_confidence": 0.2909,
+  "validation_evidence": "Boat predicted on dry structure (area=45312px, water overlap=11.2%); remapped to BUILDING.",
+  "original_bbox": [
+    213,
+    375,
+    469,
+    552
+  ],
+  "cropped_bbox": [
+    175,
+    349,
+    507,
+    578
+  ],
+  "image_width": 1280,
+  "image_height": 720,
+  "category": "false_boat"
+}
