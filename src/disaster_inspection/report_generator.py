@@ -27,13 +27,21 @@ class DisasterReportGenerator:
 
         incidents_html = ""
         for inc in incidents:
+            if inc.get("x_m") is not None and inc.get("location_status") != "UNLOCALIZED":
+                reproj_info = f" (reproj: {inc['reprojection_error_px']}px)" if inc.get("reprojection_error_px") is not None else ""
+                loc_str = f"X: {inc['x_m']:.2f}, Y: {inc['y_m']:.2f}, Z: {inc['z_m']:.2f} [VGGT RELATIVE SCALE]{reproj_info}"
+            else:
+                loc_str = "UNLOCALIZED (Insufficient Depth / Reprojection Fail)"
+            
+            src_frames = inc.get("source_frames", [inc.get("frame_idx", 0)])
             incidents_html += f"""
             <tr style="border-bottom: 1px solid #e5e7eb;">
                 <td style="padding: 10px; font-weight: bold;">{inc.get('incident_id')}</td>
                 <td style="padding: 10px;">{inc.get('incident_type')}</td>
-                <td style="padding: 10px;"><span style="background-color: #fee2e2; color: #991b1b; padding: 3px 8px; borderRadius: 4px;">{inc.get('severity')}</span></td>
+                <td style="padding: 10px;"><span style="background-color: #fee2e2; color: #991b1b; padding: 3px 8px; border-radius: 4px;">{inc.get('severity')}</span></td>
                 <td style="padding: 10px;">{inc.get('confidence', 0.0):.2f}</td>
-                <td style="padding: 10px;">X: {inc.get('x_m', 0.0):.2f}m, Y: {inc.get('y_m', 0.0):.2f}m, Z: {inc.get('z_m', 0.0):.2f}m</td>
+                <td style="padding: 10px;">{loc_str}</td>
+                <td style="padding: 10px;">Frames {src_frames}</td>
                 <td style="padding: 10px;">{inc.get('evidence')}</td>
                 <td style="padding: 10px; font-weight: bold; color: #1d4ed8;">{inc.get('status')}</td>
             </tr>
@@ -96,6 +104,7 @@ class DisasterReportGenerator:
                     <th>Severity</th>
                     <th>Confidence</th>
                     <th>3D Location (Local Metric)</th>
+                    <th>Source Frames</th>
                     <th>Evidence Note</th>
                     <th>Verification Status</th>
                 </tr>

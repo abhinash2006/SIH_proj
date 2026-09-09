@@ -54,7 +54,7 @@ class DepthAnythingV2Estimator:
         return self.model
 
     def _load_direct_state_dict(self):
-        """Fallback direct model state dict loader."""
+        """Loads model with DINOv2 backbone and attempts to load checkpoint weights."""
         try:
             backbone = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14", pretrained=True)
             
@@ -88,6 +88,21 @@ class DepthAnythingV2Estimator:
                     return torch.relu(depth)
 
             self.model = SimpleDepthAnythingV2(backbone, head).to(self.device)
+            
+            # Attempt to load checkpoint weights if available
+            if self.checkpoint_path.exists():
+                try:
+                    state_dict = torch.load(str(self.checkpoint_path), map_location=self.device, weights_only=False)
+                    # Handle nested state dicts
+                    if "model" in state_dict:
+                        state_dict = state_dict["model"]
+                    self.model.load_state_dict(state_dict, strict=False)
+                    logger.info(f"[SUCCESS] Loaded Depth Anything V2 checkpoint weights from {self.checkpoint_path}")
+                except Exception as ckpt_err:
+                    logger.info(f"[INFO] Checkpoint format mismatch ({ckpt_err}), using DINOv2 backbone with untrained head.")
+            else:
+                logger.info("[INFO] No local checkpoint found, using DINOv2 backbone with untrained DPT head.")
+                
         except Exception as e:
             logger.info(f"[INFO] Initializing lightweight Depth-Anything monocular depth network ({e}).")
             class LightweightDepthNet(nn.Module):

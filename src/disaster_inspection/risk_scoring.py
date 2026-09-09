@@ -24,21 +24,27 @@ class DisasterRiskScorer:
         reasons = []
         priorities = []
 
-        # 1. Person Detection (+35 pts per visible person)
-        people_count = sum(1 for d in detected_objects if d.get("class_name") == "person")
+        # Check if active disaster hazards exist
+        has_active_disaster = len(hazards) > 0 or len(damage_incidents) > 0
+
+        # 1. Person Detection (Normal activity vs Disaster Exposure)
+        people_count = sum(1 for d in detected_objects if d.get("class_name") in ["person", "PERSON_DETECTED"])
         if people_count > 0:
-            pts = min(45.0, people_count * 30.0)
-            score += pts
-            reasons.append(f"+ {people_count} Person(s) detected in aerial imagery (+{pts:.0f} pts)")
-            priorities.append(f"Priority 1: Immediate life safety inspection for {people_count} detected person(s).")
+            if has_active_disaster:
+                pts = min(40.0, people_count * 20.0)
+                score += pts
+                reasons.append(f"+ {people_count} Person(s) detected in active disaster zone (+{pts:.0f} pts)")
+                priorities.append(f"Priority 1: Immediate life safety inspection for {people_count} person(s) exposed to disaster.")
+            else:
+                reasons.append(f"Information: {people_count} Person(s) detected in normal environment (No emergency exposure).")
         else:
             reasons.append("No person detected in analyzed drone imagery.")
 
-        # 2. Flood / Water Hazard (+30 pts)
+        # 2. Flood / Water Hazard (+50 pts max for severe flood inundation)
         flood_hazards = [h for h in hazards if h.get("incident_type") == "FLOOD_ZONE"]
         if flood_hazards:
             max_cov = max(h.get("coverage_pct", 10.0) for h in flood_hazards)
-            pts = min(35.0, 20.0 + max_cov * 0.5)
+            pts = min(50.0, 25.0 + max_cov * 0.6)
             score += pts
             reasons.append(f"+ Active flood water coverage detected ({max_cov:.1f}% area) (+{pts:.0f} pts)")
             priorities.append("Priority 2: Water rescue & flood-isolated zone inspection.")
@@ -57,17 +63,18 @@ class DisasterRiskScorer:
             reasons.append(f"+ Ground route obstruction / debris blockage detected (+15 pts)")
             priorities.append("Priority 4: Debris clearing for emergency responder access.")
 
-        # Determine Risk Level
-        if score >= 65.0:
-            risk_level = "CRITICAL"
-        elif score >= 40.0:
-            risk_level = "HIGH"
-        elif score >= 20.0:
-            risk_level = "MEDIUM"
+        if not has_active_disaster:
+            score = 0.0
+            risk_level = "LOW / NO DISASTER EVIDENCE"
+            priorities = ["Routine monitoring. No emergency rescue action required."]
         else:
-            risk_level = "LOW"
-
-        if not priorities:
-            priorities.append("Priority 5: Standard routine aerial survey monitoring.")
+            if score >= 75.0:
+                risk_level = "CRITICAL"
+            elif score >= 45.0:
+                risk_level = "HIGH"
+            elif score >= 20.0:
+                risk_level = "MEDIUM"
+            else:
+                risk_level = "LOW"
 
         return risk_level, min(100.0, round(score, 1)), reasons, priorities

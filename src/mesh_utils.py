@@ -40,7 +40,7 @@ class MeshGenerator:
         
         # Estimate and orient normals
         pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-        pcd.orient_normals_consistent_tangent_plane(k=15)
+        pcd.orient_normals_towards_camera_location(camera_location=np.array([0.0, 0.0, 0.0]))
         
         # Run Poisson reconstruction
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
@@ -48,7 +48,8 @@ class MeshGenerator:
         )
         
         # Density trimming to remove spurious outer hulls
-        if density_trim_quantile > 0 and len(densities) > 0:
+        density_trim_quantile = max(0.15, density_trim_quantile)
+        if len(densities) > 0:
             densities_np = np.asarray(densities)
             density_threshold = np.quantile(densities_np, density_trim_quantile)
             vertices_to_remove = densities_np < density_threshold
@@ -58,6 +59,33 @@ class MeshGenerator:
         mesh.remove_duplicated_triangles()
         mesh.remove_duplicated_vertices()
         mesh.remove_non_manifold_edges()
+
+        # Trim long edge triangles (removes stretched vertical paper curtains)
+        if len(mesh.triangles) > 0:
+            verts = np.asarray(mesh.vertices)
+            tris = np.asarray(mesh.triangles)
+            v0 = verts[tris[:, 0]]
+            v1 = verts[tris[:, 1]]
+            v2 = verts[tris[:, 2]]
+            
+            l0 = np.linalg.norm(v0 - v1, axis=1)
+            l1 = np.linalg.norm(v1 - v2, axis=1)
+            l2 = np.linalg.norm(v2 - v0, axis=1)
+            max_edges = np.maximum(np.maximum(l0, l1), l2)
+            
+            edge_threshold = min(0.20, float(np.percentile(max_edges, 92)))
+            tris_to_remove = max_edges > edge_threshold
+            mesh.remove_triangles_by_mask(tris_to_remove)
+            mesh.remove_unreferenced_vertices()
+
+        # Transfer RGB colors from point cloud to mesh vertices
+        if pcd.has_colors() and len(mesh.vertices) > 0:
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            mesh_colors = []
+            for v in np.asarray(mesh.vertices):
+                _, idx, _ = pcd_tree.search_knn_vector_3d(v, 1)
+                mesh_colors.append(pcd.colors[idx[0]])
+            mesh.vertex_colors = o3d.utility.Vector3dVector(np.array(mesh_colors))
         
         o3d.io.write_triangle_mesh(str(output_path), mesh)
         size_mb = output_path.stat().st_size / (1024 * 1024)

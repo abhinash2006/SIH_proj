@@ -24,59 +24,98 @@ Our system converts raw aerial drone video into a **Metric 3D Reconstruction** p
 ## 2. Integrated System Architecture
 
 ```text
-                               🚁 DRONE VIDEO
-                                     │
-                                     ▼
-                            VIDEO PROCESSING
-                                     │
-                                     ▼
-                           FRAME SELECTION (Laplacian)
-                                     │
-                    ┌────────────────┴────────────────┐
-                    ▼                                 ▼
-         DEPTH ANYTHING V2 (Small)             META VGGT-1B
-           Dense Monocular Depth          Multi-view Cameras, Depth
-                    │                           & Point Maps
-                    └────────────────┬────────────────┘
-                                     ▼
-                              DEPTH ALIGNMENT
-                     (Robust Scale & Shift to Metric)
-                                     │
-                                     ▼
-                            CONFIDENCE FUSION
-                     (VGGT + Monocular Agreement)
-                                     │
-                                     ▼
-                        DEPTH-AWARE 3D FILTERING
-                                     │
-                                     ▼
-                         METRIC 3D RECONSTRUCTION
-                                     │
-                     ┌───────────────┼───────────────┐
-                     ▼               ▼               ▼
-                  PERSON          DAMAGE          HAZARD
-                 DETECTION       DETECTION       DETECTION
-                     │               │               │
-                     └───────────────┼───────────────┘
-                                     ▼
-                           2D-to-3D GEO PROJECTION
-                             (X, Y, Z Coordinates)
-                                     │
-                                     ▼
-                          INCIDENT MANAGER (SQLite)
-                                     │
-                                     ▼
-                           RISK SCORER & REPORT
-                    (LOW / MEDIUM / HIGH / CRITICAL)
-                                     │
-                                     ▼
-                       INTERACTIVE 3D RESCUE DASHBOARD
-                             (Gradio Web UI)
+                                 🚁 DRONE VIDEO
+                                       │
+                                       ▼
+                              FRAME SELECTION
+                                       │
+                     ┌─────────────────┴─────────────────┐
+                     ▼                                   ▼
+            META VGGT-1B                         DEPTH ANYTHING V2
+         3D Geometry, Camera Poses,             Monocular Depth Validation
+         Depth & Point Map                               │
+                     │                                   │
+                     └─────────────────┬─────────────────┘
+                                       ▼
+                            3D RECONSTRUCTION
+                                       │
+                         ┌─────────────┴─────────────┐
+                         ▼                           ▼
+                 ULTRALYTICS YOLO             DISASTER MODELS
+                2D Object Perception           Flood / Structure /
+               (Person, Vehicle, etc.)          Damage Analysis
+                         │                           │
+                         └─────────────┬─────────────┘
+                                       ▼
+                               SPATIAL REASONING
+                             2D ➔ 3D Localization
+                                       │
+                                       ▼
+                              VALIDATED INCIDENT
+                                       │
+                     ┌─────────────────┼─────────────────┐
+                     ▼                 ▼                 ▼
+                 3D SCENE        INCIDENT TABLE     RISK ENGINE
+                     │                 │                 │
+                     └─────────────────┼─────────────────┘
+                                       ▼
+                              RESCUE DASHBOARD
 ```
 
 ---
 
-## 3. System Directory Structure
+## 3. Core Technical Components
+
+- **VGGT-1B (`facebook/VGGT-1B`)**: Foundation 3D visual geometry model predicting unified camera poses, camera intrinsics ($K$), and 3D point maps across aerial drone frames.
+- **Depth Anything V2 (`vits`)**: Independent monocular depth estimation providing scale/shift validation and fused geometric confidence gating.
+- **Ultralytics YOLO (`yolo26n.pt` / `yolo11n.pt`)**: Isolated 2D perception layer for object detection and multi-frame tracking (`PERSON_DETECTED`, `VEHICLE`, etc.). Bounding boxes maintain original image resolution coordinates and map into VGGT 3D space via 2D$\rightarrow$3D reprojection.
+- **Disaster Context & Spatial Reasoning Engine**: Evaluates spatial relationships between 3D localized objects and flood/damage boundaries. Enforces strict rules (`PERSON_DETECTED` $\neq$ `VICTIM`, `VEHICLE` $\neq$ `BLOCKED_ROAD`, `WATER` $\neq$ `FLOOD`).
+
+---
+
+## 4. Execution Modes & CLI
+
+### A. Environment Diagnostic Check
+Verify PyTorch, CUDA 12.4, GPU, and Ultralytics YOLO environment:
+```powershell
+python scripts/check_yolo_environment.py
+```
+
+### B. Run Complete Inspection Pipeline CLI
+```powershell
+python scripts/run_pipeline.py \
+    --input data/raw/uav_sequence/1121222322212102-4/images \
+    --use-vggt \
+    --use-depth-anything \
+    --use-yolo \
+    --yolo-model yolo26n.pt \
+    --yolo-confidence 0.35 \
+    --yolo-imgsz 640 \
+    --yolo-device auto
+```
+
+### C. Performance Benchmark
+Measure FPS, frame latency, peak VRAM, and detection statistics:
+```powershell
+python scripts/benchmark_yolo.py
+```
+
+---
+
+## 5. Model Inventory & Licensing
+
+| Component | Purpose | Checkpoint | License |
+| :--- | :--- | :--- | :--- |
+| **VGGT-1B** | Multi-View Cameras, Depth & Point Maps | `facebook/VGGT-1B` (4.8 GB) | **CC BY-NC 4.0** |
+| **Depth Anything V2 Small** | Monocular Depth Validation | `depth_anything_v2_vits.pth` (99 MB) | **Apache-2.0** |
+| **Ultralytics YOLO** | 2D Object Perception & Tracking | `yolo26n.pt` / `yolo11n.pt` (5.4 MB) | **AGPL-3.0 / Enterprise** |
+| **OpenCV / Open3D** | Image Refinement & Poisson Meshing | Classical Algorithms | **Apache 2.0 / MIT** |
+
+For detailed third-party licensing compliance notes (including AGPL-3.0 requirements for Ultralytics YOLO), see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+---
+
+## 6. System Directory Structure
 
 ```
 d:/Vggt/
@@ -122,7 +161,7 @@ d:/Vggt/
 
 ---
 
-## 4. Installation & Environment Setup
+## 7. Installation & Environment Setup
 
 ### Prerequisites
 - **OS**: Windows 10/11, Linux (Ubuntu 20.04+)
@@ -139,7 +178,7 @@ pytest tests/ -v
 
 ---
 
-## 5. Execution Modes
+## 8. Execution Modes
 
 ### A. SIH Demo Mode (For Judges & Evaluators)
 Run the one-command demonstration script:
@@ -167,7 +206,7 @@ Open browser at `http://127.0.0.1:7860`.
 
 ---
 
-## 6. The 4 Benchmark Experiments
+## 9. The 4 Benchmark Experiments
 
 1. **Experiment A (Baseline)**: Raw selected frames $\rightarrow$ VGGT $\rightarrow$ 3D Point Cloud.
 2. **Experiment B (Depth Validation)**: VGGT + Depth Anything V2 $\rightarrow$ Robust Scale/Shift Alignment $\rightarrow$ Exponential Consistency Heatmaps.
@@ -176,9 +215,6 @@ Open browser at `http://127.0.0.1:7860`.
 
 ---
 
-## 7. Model Inventory & Licensing
-
-| Model | Purpose | Checkpoint | License |
 | :--- | :--- | :--- | :--- |
 | **VGGT-1B** | Multi-View Cameras, Depth & Point Maps | `facebook/VGGT-1B` (4.8 GB) | **CC BY-NC 4.0** |
 | **Depth Anything V2 Small** | Monocular Depth Validation & Confidence | `depth_anything_v2_vits.pth` (99 MB) | **Apache 2.0** |

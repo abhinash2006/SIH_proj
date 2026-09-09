@@ -1,0 +1,16 @@
+yolo:
+  enabled: true
+  model: "yolo26n.pt"
+  confidence: 0.35
+  iou: 0.45
+  imgsz: 640
+  device: "auto"
+  half: true
+  classes: null  # null means detect all supported COCO classes, or [0, 2, 3, 5, 7] for person & vehicles
+  tracking: false
+  tiled_inference: false
+  tile_size: 1024
+  tile_overlap: 0.20
+  person_min_size: 10
+  localization_window: 5
+  reprojection_threshold: 30.0

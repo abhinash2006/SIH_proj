@@ -81,6 +81,18 @@ class PointCloudFilter:
             )
             logger.info(f" - After Radius Outlier Removal (r={self.radius}m, min_pts={self.radius_nb_points}): {len(pcd.points):,} points")
 
+        # 4. Connected Component / Cluster Filtering (Removes isolated floating geometry clusters)
+        if len(pcd.points) > 100:
+            labels = np.array(pcd.cluster_dbscan(eps=self.voxel_size * 4.0, min_points=10, print_progress=False))
+            if len(labels) > 0 and labels.max() >= 0:
+                # Keep clusters containing at least 2% of total points or >50 points
+                counts = np.bincount(labels[labels >= 0])
+                valid_clusters = np.where((counts >= 50) | (counts >= len(pcd.points) * 0.02))[0]
+                keep_mask = np.isin(labels, valid_clusters)
+                if np.sum(keep_mask) > 100:
+                    pcd = pcd.select_by_index(np.where(keep_mask)[0])
+                    logger.info(f" - After Connected Component Cluster Filtering: {len(pcd.points):,} points")
+
         filtered_points = np.asarray(pcd.points, dtype=np.float32)
         filtered_colors = np.asarray(pcd.colors, dtype=np.float32)
 

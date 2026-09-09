@@ -6,10 +6,18 @@ from pathlib import Path
 from typing import List, Dict, Any, Union, Optional, Tuple
 import numpy as np
 
-# Ensure torch Windows DLLs are available
-torch_lib = r"D:\Vggt\drone_vggt_env\Lib\site-packages\torch\lib"
-if os.path.exists(torch_lib) and hasattr(os, 'add_dll_directory'):
-    os.add_dll_directory(torch_lib)
+if os.name == "nt":
+    candidates = [
+        os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib"),
+        r"D:\Vggt\drone_vggt_env\Lib\site-packages\torch\lib"
+    ]
+    for lib in candidates:
+        if os.path.exists(lib) and hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(lib)
+                break
+            except Exception:
+                pass
 
 import torch
 import torch.nn.functional as F
@@ -62,7 +70,7 @@ class VGGTInferenceEngine:
                 self.chunk_size = 96  # 12GB+ VRAM
         else:
             self.dtype = torch.float32
-        self.dtype = torch.bfloat16 if (self.device == "cuda" and torch.cuda.is_bf16_supported()) else torch.float16
+            self.chunk_size = 24  # Default for CPU
 
     def load_model(self):
         """Loads model weights into VRAM."""
@@ -151,97 +159,63 @@ class VGGTInferenceEngine:
         """
         self.load_model()
         
-        current_chunk_size = min(6, chunk_size or self.chunk_size)
+        current_chunk_size = len(image_paths)
         num_images = len(image_paths)
-        logger.info(f"[INFO] Running VGGT chunked inference on {num_images} images (max chunk size: {current_chunk_size})...")
+        logger.info(f"[INFO] Running VGGT full-sequence unified inference on {num_images} images...")
 
         # Determine safe resolution: 392x392 for <= 6GB VRAM GPUs, 518x518 for > 6GB VRAM GPUs
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3) if self.device == "cuda" else 16.0
         target_res = 392 if vram_gb <= 6.0 else 518
 
-        # Break image_paths into chunks of current_chunk_size
-        chunk_paths_list = [image_paths[i:i + current_chunk_size] for i in range(0, num_images, current_chunk_size)]
+        images_tensor = self.preprocess_images(image_paths, target_size=target_res).to(self.device)
 
-        all_extrinsics = []
-        all_intrinsics = []
-        all_depth_maps = []
-        all_depth_conf = []
-        all_world_points = []
-        all_world_points_conf = []
-        all_unprojected_points = []
-        all_images_rgb = []
-        peak_vram_mb = 0.0
-
-        for idx, chunk_paths in enumerate(chunk_paths_list):
-            logger.info(f"[INFO] Processing chunk {idx+1}/{len(chunk_paths_list)} ({len(chunk_paths)} frames)...")
-            images_tensor = self.preprocess_images(chunk_paths, target_size=target_res).to(self.device)
-
-            if self.device == "cuda":
-                try:
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-                gc.collect()
-
-            with torch.cuda.amp.autocast(enabled=self.use_mixed_precision, dtype=self.dtype):
-                predictions = self.model(images_tensor)
-
-            if self.device == "cuda":
-                current_peak = torch.cuda.max_memory_allocated(0) / (1024**2)
-                peak_vram_mb = max(peak_vram_mb, current_peak)
-
-            # 1. Camera parameters
-            pose_enc = predictions["pose_enc"]  # [B=1, S, 9]
-            extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc, images_tensor.shape[-2:])
-            extrinsic_np = extrinsic.squeeze(0).float().cpu().numpy()
-            intrinsic_np = intrinsic.squeeze(0).float().cpu().numpy()
-
-            # 2. Depth maps & Confidence
-            depth_np = predictions["depth"].squeeze(0).float().cpu().numpy()  # [S, H, W, 1]
-            depth_conf_np = predictions["depth_conf"].squeeze(0).float().cpu().numpy()  # [S, H, W]
-
-            # 3. Direct Point Map & Confidence
-            world_points_np = predictions["world_points"].squeeze(0).float().cpu().numpy()  # [S, H, W, 3]
-            world_points_conf_np = predictions["world_points_conf"].squeeze(0).float().cpu().numpy()  # [S, H, W]
-
-            # RGB images
-            images_rgb = (images_tensor.squeeze(0).permute(0, 2, 3, 1).cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
-
-            # 4. Unproject depth map
+        if self.device == "cuda":
             try:
-                unproj_pts = unproject_depth_map_to_point_map(depth_np, extrinsic_np, intrinsic_np)
-            except Exception as unproj_err:
-                logger.warning(f"[WARNING] Unprojection chunk error ({unproj_err}), using world points.")
-                unproj_pts = world_points_np
-
-            # Append to accumulated lists on CPU
-            all_extrinsics.append(extrinsic_np)
-            all_intrinsics.append(intrinsic_np)
-            all_depth_maps.append(depth_np)
-            all_depth_conf.append(depth_conf_np)
-            all_world_points.append(world_points_np)
-            all_world_points_conf.append(world_points_conf_np)
-            all_unprojected_points.append(unproj_pts)
-            all_images_rgb.append(images_rgb)
-
-            # Clean GPU memory completely after chunk
-            del predictions
-            del images_tensor
-            if self.device == "cuda":
                 torch.cuda.empty_cache()
-                gc.collect()
+            except Exception:
+                pass
+            gc.collect()
 
-        logger.info(f"[SUCCESS] VGGT chunked inference completed! Peak VRAM: {peak_vram_mb:.1f} MB across {len(image_paths)} frames.")
+        with torch.cuda.amp.autocast(enabled=self.use_mixed_precision, dtype=self.dtype):
+            predictions = self.model(images_tensor)
+
+        peak_vram_mb = torch.cuda.max_memory_allocated(0) / (1024**2) if self.device == "cuda" else 0.0
+
+        # 1. Camera parameters
+        pose_enc = predictions["pose_enc"]  # [B=1, S, 9]
+        extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc, images_tensor.shape[-2:])
+        extrinsic_np = extrinsic.squeeze(0).float().cpu().numpy()
+        intrinsic_np = intrinsic.squeeze(0).float().cpu().numpy()
+
+        # 2. Depth maps & Confidence
+        depth_np = predictions["depth"].squeeze(0).float().cpu().numpy()  # [S, H, W, 1]
+        depth_conf_np = predictions["depth_conf"].squeeze(0).float().cpu().numpy()  # [S, H, W]
+
+        # 3. Direct Point Map & Confidence
+        world_points_np = predictions["world_points"].squeeze(0).float().cpu().numpy()  # [S, H, W, 3]
+        world_points_conf_np = predictions["world_points_conf"].squeeze(0).float().cpu().numpy()  # [S, H, W]
+
+        # RGB images
+        images_rgb = (images_tensor.squeeze(0).permute(0, 2, 3, 1).cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
+
+        # 4. Unproject depth map
+        try:
+            unproj_pts = unproject_depth_map_to_point_map(depth_np, extrinsic_np, intrinsic_np)
+        except Exception as unproj_err:
+            logger.warning(f"[WARNING] Unprojection error ({unproj_err}), using world points.")
+            unproj_pts = world_points_np
+
+        logger.info(f"[SUCCESS] VGGT full-sequence inference completed! Peak VRAM: {peak_vram_mb:.1f} MB across {len(image_paths)} frames.")
 
         return {
-            "extrinsics": np.concatenate(all_extrinsics, axis=0),
-            "intrinsics": np.concatenate(all_intrinsics, axis=0),
-            "depth_maps": np.concatenate(all_depth_maps, axis=0),
-            "depth_conf": np.concatenate(all_depth_conf, axis=0),
-            "point_maps": np.concatenate(all_world_points, axis=0),
-            "point_conf": np.concatenate(all_world_points_conf, axis=0),
-            "unprojected_points": np.concatenate(all_unprojected_points, axis=0),
-            "images": np.concatenate(all_images_rgb, axis=0),
+            "extrinsics": extrinsic_np,
+            "intrinsics": intrinsic_np,
+            "depth_maps": depth_np,
+            "depth_conf": depth_conf_np,
+            "point_maps": world_points_np,
+            "point_conf": world_points_conf_np,
+            "unprojected_points": unproj_pts,
+            "images": images_rgb,
             "frame_paths": [str(p) for p in image_paths],
             "num_frames": len(image_paths),
             "peak_vram_mb": peak_vram_mb

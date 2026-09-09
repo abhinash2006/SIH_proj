@@ -38,3 +38,19 @@ def test_video_metadata_synthetic(tmp_path):
     assert meta["width"] == 120
     assert meta["height"] == 80
     assert meta["fps"] == 10.0
+
+def test_video_extract_frames(tmp_path):
+    video_path = tmp_path / "test_video_extract.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(str(video_path), fourcc, 10.0, (120, 80))
+    for _ in range(15):
+        frame = np.random.randint(0, 255, (80, 120, 3), dtype=np.uint8)
+        out.write(frame)
+    out.release()
+
+    out_dir = tmp_path / "extracted_vid"
+    extracted = VideoProcessor.extract_frames(video_path, out_dir, target_fps=2.0)
+    assert isinstance(extracted, list)
+    assert len(extracted) > 0
+    for p in extracted:
+        assert os.path.exists(p)

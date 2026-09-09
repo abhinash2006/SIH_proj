@@ -19,9 +19,17 @@ from PIL import Image
 
 # Ensure Windows PyTorch CUDA DLL path is configured
 if os.name == "nt":
-    dll_path = r"D:\Vggt\drone_vggt_env\Lib\site-packages\torch\lib"
-    if os.path.exists(dll_path):
-        os.add_dll_directory(dll_path)
+    candidates = [
+        os.path.join(sys.prefix, "Lib", "site-packages", "torch", "lib"),
+        r"D:\Vggt\drone_vggt_env\Lib\site-packages\torch\lib"
+    ]
+    for dll_path in candidates:
+        if os.path.exists(dll_path) and hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(dll_path)
+                break
+            except Exception:
+                pass
 
 # Ensure local source directory is importable
 sys.path.insert(0, str(Path(__file__).parent))
@@ -77,7 +85,7 @@ def process_disaster_drone_pipeline(
         else:
             return (
                 "### Error: Please upload a drone video or provide a valid image directory path.",
-                None, [], [], [], [], None, None, None, None, [], "", ""
+                None, [], [], [], [], None, None, None, None, [], [], ""
             )
 
         work_dir = Path("outputs/gradio_session")
@@ -105,7 +113,7 @@ def process_disaster_drone_pipeline(
         selected_paths, quality_metrics = selector.select_optimal_frames(frame_paths, selected_dir, max_frames=int(max_frames))
 
         if len(selected_paths) == 0:
-            return "No frames passed quality selection threshold. Lower the sharpness threshold.", None, [], [], [], [], None, None, None, None, [], "", ""
+            return "No frames passed quality selection threshold. Lower the sharpness threshold.", None, [], [], [], [], None, None, None, None, [], [], ""
 
         # 3. Depth Anything V2 Monocular Estimation (Sequential GPU memory load)
         da2_depth_maps = []
@@ -187,11 +195,19 @@ def process_disaster_drone_pipeline(
         all_hazards = []
         all_damage = []
 
+        from src.geometry_quality import GeometryQualityEvaluator
+        geom_eval = GeometryQualityEvaluator.evaluate_reconstruction_quality(predictions, final_pts)
+        logger.info(f"[GEOMETRY EVAL] Status: {geom_eval['geometry_status']} | Score: {geom_eval['geometry_quality_score']}/100 | Allowed: {geom_eval['localization_allowed']}")
+
         if do_disaster_inspection:
-            obj_det = DisasterObjectDetector()
+            from src.yolo_detector import YOLODetector
+            yolo_det = YOLODetector(model_name="yolo26n.pt", confidence=0.35)
             tracker = MultiFrameObjectTracker()
             dmg_det = StructuralDamageDetector()
             hz_det = HazardDetector()
+
+            # Batch run YOLO perception
+            yolo_dets_batch = yolo_det.detect_frames(selected_paths, conf=0.35)
 
             for i, f_path in enumerate(selected_paths):
                 img_bgr = cv2.imread(f_path)
@@ -199,37 +215,93 @@ def process_disaster_drone_pipeline(
                 ext = predictions["extrinsics"][i]
                 intri = predictions["intrinsics"][i]
 
-                dets = obj_det.detect_objects_in_frame(img_bgr, frame_idx=i)
-                tracked_dets = tracker.track_frame_detections(dets, frame_idx=i)
-                annotated_img = DisasterObjectDetector.draw_detections(img_bgr, tracked_dets)
+                raw_dets = yolo_dets_batch[i]
+                tracked_dets = tracker.track_frame_detections(raw_dets, frame_idx=i)
+                annotated_img = yolo_det.annotate_frame(img_bgr, tracked_dets)
                 detection_gallery.append(Image.fromarray(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)))
 
-                for det in tracked_dets:
-                    proj3d = GeoProjection3D.project_detection_to_3d(det, depth_m, ext, intri)
-                    all_dets_3d.append(proj3d)
-
-                    if det["class_name"] == "person":
-                        inc_manager.add_incident({
-                            "incident_type": "VICTIM_PERSON_DETECTED",
-                            "object_id": proj3d.get("object_id", "PERSON_001"),
-                            "confidence": proj3d["confidence"],
-                            "severity": "CRITICAL",
-                            "x_m": proj3d["x_m"],
-                            "y_m": proj3d["y_m"],
-                            "z_m": proj3d["z_m"],
-                            "frame_idx": i,
-                            "evidence": f"Person detected at 3D location ({proj3d['x_m']}m, {proj3d['y_m']}m, {proj3d['z_m']}m)."
-                        })
-
+                # Inspect damage and hazards first to establish scene disaster context
                 dmg = dmg_det.analyze_structural_damage(img_bgr, depth_m, tracked_dets, frame_idx=i)
                 hz = hz_det.analyze_hazards(img_bgr, depth_m, tracked_dets, frame_idx=i)
-                all_damage.extend(dmg)
-                all_hazards.extend(hz)
 
                 for d in dmg:
+                    if geom_eval["localization_allowed"]:
+                        p3d = GeoProjection3D.project_detection_to_3d(d, depth_m, ext, intri)
+                        d.update(p3d)
+                    else:
+                        d.update({"location_status": "UNLOCALIZED", "x_m": None, "y_m": None, "z_m": None})
+                    all_damage.append(d)
                     inc_manager.add_incident(d)
+
                 for h in hz:
+                    if geom_eval["localization_allowed"]:
+                        p3d = GeoProjection3D.project_detection_to_3d(h, depth_m, ext, intri)
+                        h.update(p3d)
+                    else:
+                        h.update({"location_status": "UNLOCALIZED", "x_m": None, "y_m": None, "z_m": None})
+                    all_hazards.append(h)
                     inc_manager.add_incident(h)
+
+                is_scene_flooded = any(h.get("incident_type") == "FLOOD_ZONE" for h in hz)
+                has_active_disaster = len(hz) > 0 or len(dmg) > 0
+
+                from src.disaster_inspection.segmentation import SceneSegmentationAnalyzer
+                water_mask_frame, _ = SceneSegmentationAnalyzer.segment_water_candidates(img_bgr)
+
+                for det in tracked_dets:
+                    if geom_eval["localization_allowed"]:
+                        proj3d = GeoProjection3D.project_detection_to_3d(det, depth_m, ext, intri)
+                    else:
+                        proj3d = det.copy()
+                        proj3d.update({"location_status": "UNLOCALIZED", "x_m": None, "y_m": None, "z_m": None, "reprojection_error_px": None})
+                    
+                    all_dets_3d.append(proj3d)
+
+                    cls_name = det.get("class_name")
+                    if cls_name == "person":
+                        inc_type = "VICTIM_PERSON_DETECTED" if has_active_disaster else "PERSON_DETECTED"
+                        sev = "CRITICAL" if has_active_disaster else "LOW"
+                        ev = f"Person / potential victim located in active disaster zone (frame {i})." if has_active_disaster else f"Civilian person observed during aerial monitoring (frame {i})."
+                        inc_manager.add_incident({
+                            "incident_type": inc_type,
+                            "target_object_class": "person",
+                            "object_id": proj3d.get("object_id", "PERSON_001"),
+                            "confidence": proj3d["confidence"],
+                            "detection_confidence": proj3d.get("detection_confidence", proj3d["confidence"]),
+                            "localization_confidence": proj3d.get("localization_confidence", 0.0),
+                            "severity": sev,
+                            "location_status": proj3d["location_status"],
+                            "x_m": proj3d.get("x_m"),
+                            "y_m": proj3d.get("y_m"),
+                            "z_m": proj3d.get("z_m"),
+                            "reprojection_error_px": proj3d.get("reprojection_error_px"),
+                            "frame_idx": i,
+                            "evidence": ev
+                        })
+                    elif cls_name in ["building", "structure"]:
+                        bx1, by1, bx2, by2 = det["bbox"]
+                        b_crop = water_mask_frame[max(0, by1):min(img_bgr.shape[0], by2), max(0, bx1):min(img_bgr.shape[1], bx2)]
+                        b_water_pct = float(np.mean(b_crop > 0)) if b_crop.size > 0 else 0.0
+                        if is_scene_flooded and (b_water_pct > 0.02 or any(h.get("water_state") == "FLOOD_ZONE" for h in hz)):
+                            inc_manager.add_incident({
+                                "incident_type": "FLOODED_STRUCTURE",
+                                "target_object_class": "building",
+                                "object_id": proj3d.get("object_id", f"STRUCTURE_{i+1:03d}"),
+                                "confidence": proj3d["confidence"],
+                                "detection_confidence": proj3d.get("detection_confidence", proj3d["confidence"]),
+                                "localization_confidence": proj3d.get("localization_confidence", 0.0),
+                                "severity": "HIGH",
+                                "location_status": proj3d["location_status"],
+                                "x_m": proj3d.get("x_m"),
+                                "y_m": proj3d.get("y_m"),
+                                "z_m": proj3d.get("z_m"),
+                                "reprojection_error_px": proj3d.get("reprojection_error_px"),
+                                "frame_idx": i,
+                                "evidence": f"Flooded structure inundated by water ({b_water_pct*100.0:.1f}% water contact) in aerial frame {i}."
+                            })
+
+            yolo_det.release()
+
 
         risk_level, risk_score, reasons, priorities = DisasterRiskScorer.calculate_scene_risk(
             all_dets_3d, all_hazards, all_damage
@@ -241,6 +313,8 @@ def process_disaster_drone_pipeline(
             "reconstructed_points": len(final_pts),
             "detected_people": sum(1 for d in all_dets_3d if d.get("class_name") == "person"),
             "detected_vehicles": sum(1 for d in all_dets_3d if d.get("class_name") == "vehicle"),
+            "geometry_status": geom_eval["geometry_status"],
+            "geometry_quality_score": geom_eval["geometry_quality_score"],
             "risk_level": risk_level,
             "risk_score": risk_score,
             "risk_reasons": reasons,
@@ -253,22 +327,50 @@ def process_disaster_drone_pipeline(
         people_count = summary_data["detected_people"]
         summary_markdown = (
             f"### 🛸 AI Disaster Inspection Executive Summary\n"
+            f"- **Reconstruction Status**: **{geom_eval['geometry_status']}** (Quality Score: {geom_eval['geometry_quality_score']}/100)\n"
             f"- **Rescue Risk Level**: **{risk_level}** (Risk Score: {risk_score}/100)\n"
             f"- **Reconstructed 3D Points**: {len(final_pts):,}\n"
             f"- **Detected People**: **{people_count}** ({'NO PERSON DETECTED IN AVAILABLE IMAGERY' if people_count==0 else 'VICTIMS LOCATED'})\n"
             f"- **Detected Vehicles**: {summary_data['detected_vehicles']}\n"
-            f"- **Identified Hazards / Alerts**: {len(inc_manager.get_all_incidents())}\n"
+            f"- **Deduplicated Incidents / Alerts**: {len(inc_manager.get_all_incidents())}\n"
             f"- **Actionable Rescue Priorities**: {priorities[0] if priorities else 'Routine Monitoring'}"
         )
 
-        vggt_depth_gallery = [Image.fromarray((predictions["depth_maps"][i].squeeze() / predictions["depth_maps"][i].max() * 255).astype(np.uint8)) for i in range(len(selected_paths))]
+        vggt_depth_gallery = []
+        for i in range(len(selected_paths)):
+            d_arr = predictions["depth_maps"][i].squeeze()
+            d_max = float(np.nanmax(d_arr)) if d_arr.size > 0 else 0.0
+            if d_max > 0:
+                norm_d = (np.nan_to_num(d_arr / d_max, nan=0.0) * 255.0).clip(0, 255).astype(np.uint8)
+            else:
+                norm_d = np.zeros_like(d_arr, dtype=np.uint8)
+            vggt_depth_gallery.append(Image.fromarray(norm_d))
         selected_imgs = [Image.open(p) for p in selected_paths]
 
-        # Table data for Incidents
-        incidents_table = [
-            [inc["incident_id"], inc["incident_type"], inc["severity"], inc["confidence"], f"X:{inc['x_m']}m, Y:{inc['y_m']}m, Z:{inc['z_m']}m", inc["evidence"], inc["status"]]
-            for inc in inc_manager.get_all_incidents()
-        ]
+        # Formatted table data for Incidents
+        incidents_table = []
+        for inc in inc_manager.get_all_incidents():
+            if inc["x_m"] is not None and inc["location_status"] != "UNLOCALIZED":
+                reproj_str = f" (reproj: {inc['reprojection_error_px']}px)" if inc.get("reprojection_error_px") is not None else ""
+                loc_str = f"X:{inc['x_m']:.2f}, Y:{inc['y_m']:.2f}, Z:{inc['z_m']:.2f}{reproj_str}"
+            else:
+                loc_str = "UNLOCALIZED"
+            
+            src_frames_str = f"Frames {inc.get('source_frames', [inc.get('frame_idx', 0)])}"
+            obj_cls = inc.get("target_object_class", inc.get("object_id", "object"))
+            det_conf = float(inc.get("detection_confidence", inc.get("confidence", 0.0)))
+            loc_conf = float(inc.get("localization_confidence", 0.0 if inc["location_status"]=="UNLOCALIZED" else 0.90))
+
+            incidents_table.append([
+                inc["incident_id"],
+                inc["incident_type"],
+                obj_cls,
+                f"{det_conf:.2f}",
+                f"{loc_conf:.2f}",
+                loc_str,
+                src_frames_str,
+                inc.get("status", "NEEDS_VERIFICATION")
+            ])
 
         progress(1.0, desc="3D Rescue Map & Disaster Inspection Complete!")
 
@@ -296,9 +398,7 @@ def process_disaster_drone_pipeline(
 process_drone_pipeline = process_disaster_drone_pipeline
 
 def create_ui():
-    theme = gr.themes.Soft(primary_hue="blue", secondary_hue="slate")
-    
-    with gr.Blocks(theme=theme, title="Drone-VGGT: AI Disaster Inspection & 3D Rescue Mapping System") as demo:
+    with gr.Blocks(title="Drone-VGGT: AI Disaster Inspection & 3D Rescue Mapping System") as demo:
         gr.Markdown(
             """
             # 🛸 AI-Powered Drone Disaster Inspection & 3D Rescue Mapping System
@@ -347,9 +447,10 @@ def create_ui():
                     with gr.TabItem("Disaster Incidents Table"):
                         gr.Markdown("#### AI-Flagged Incidents, Victim Locations & Verification Status")
                         incidents_dataframe = gr.Dataframe(
-                            headers=["Incident ID", "Type", "Severity", "Confidence", "3D Location", "Evidence", "Status"],
+                            headers=["Incident ID", "Type", "Object Class", "Detection Conf", "Localization Conf", "3D Location", "Source Frames", "Status"],
                             label="Incident Database"
                         )
+
 
                     with gr.TabItem("Monocular Depth Validation"):
                         with gr.Row():
@@ -386,4 +487,5 @@ def create_ui():
 demo = create_ui()
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7860, share=False)
+    theme = gr.themes.Soft(primary_hue="blue", secondary_hue="slate")
+    demo.launch(server_name="127.0.0.1", server_port=7860, share=False, theme=theme)
