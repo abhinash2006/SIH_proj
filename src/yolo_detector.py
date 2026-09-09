@@ -31,15 +31,15 @@ class YOLODetector:
     def __init__(
         self,
         model_name: str = "yolo26n.pt",
-        confidence: float = 0.35,
+        confidence: float = 0.08,
         iou_threshold: float = 0.45,
         imgsz: int = 640,
         device: str = "auto",
         half: bool = True,
         classes: Optional[List[int]] = None,
-        tiled_inference: bool = False,
-        tile_size: int = 1024,
-        tile_overlap: float = 0.20
+        tiled_inference: bool = True,
+        tile_size: int = 640,
+        tile_overlap: float = 0.25
     ):
         self.model_name = model_name
         self.confidence = confidence
@@ -47,7 +47,7 @@ class YOLODetector:
         self.imgsz = imgsz
         self.device_setting = device
         self.half = half
-        self.classes = classes
+        self.classes = classes if classes is not None else [0, 1, 2, 3, 5, 7, 8]
         self.tiled_inference = tiled_inference
         self.tile_size = tile_size
         self.tile_overlap = tile_overlap
@@ -209,57 +209,131 @@ class YOLODetector:
     ) -> List[List[Dict[str, Any]]]:
         """
         Runs object tracking with persistent ID tracking across consecutive frames.
-        Uses Ultralytics model.track(..., persist=True).
+        Evaluates detections using tiled multi-scale inference to detect small aerial
+        objects/persons at drone resolution, and maintains persistent track IDs
+        using spatial & IoU association across consecutive frames.
         """
         self.load_model()
         conf_thresh = conf if conf is not None else self.confidence
         input_sz = imgsz if imgsz is not None else self.imgsz
-        use_half = self.half and self.device.type == "cuda"
 
         all_tracked_detections = []
-        
+        active_tracks: Dict[int, Dict[str, Any]] = {}
+        next_track_id = 1
+
         for idx, f_item in enumerate(frame_list):
             f_id = frame_ids[idx] if frame_ids and idx < len(frame_ids) else f"frame_{idx:04d}.jpg"
-            
-            if isinstance(f_item, (str, Path)):
-                img = cv2.imread(str(f_item))
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            else:
-                img_rgb = f_item.copy()
 
-            H_orig, W_orig = img_rgb.shape[:2]
-            
-            try:
-                results = self.model.track(
-                    source=img_rgb,
-                    conf=conf_thresh,
-                    iou=self.iou_threshold,
-                    imgsz=input_sz,
-                    device=self.device,
-                    classes=self.classes,
-                    persist=True,
-                    verbose=False
-                )
-            except Exception as err:
-                logger.warning(f"[WARNING] YOLO tracking failed on frame {idx}: {err}. Falling back to predict.")
-                results = self.model.predict(
-                    source=img_rgb, conf=conf_thresh, imgsz=input_sz, device=self.device, verbose=False
-                )
-
-            raw_records = []
-            self._parse_results(
-                results,
-                raw_records,
+            # 1. Run detection on this frame (full-frame + tiled inference + NMS + anti-boat filter)
+            frame_dets = self.detect_image(
+                f_item,
                 frame_id=f_id,
                 frame_idx=idx,
-                W_orig=W_orig,
-                H_orig=H_orig,
-                offset_x=0,
-                offset_y=0
+                conf=conf_thresh,
+                imgsz=input_sz
             )
 
-            validated_records = self._apply_anti_boat_filter(raw_records)
-            all_tracked_detections.append(validated_records)
+            if not frame_dets:
+                all_tracked_detections.append([])
+                continue
+
+            # 2. Match with active tracks across consecutive frames
+            if not active_tracks:
+                # First frame with detections: initialize tracks
+                for det in frame_dets:
+                    trk_id = next_track_id
+                    next_track_id += 1
+                    det["track_id"] = trk_id
+                    det["id"] = f"TRK_{trk_id}"
+                    det["detection_id"] = f"TRK_{trk_id}"
+                    active_tracks[trk_id] = {
+                        "bbox": det["bbox_xyxy"],
+                        "center": det["pixel_center"],
+                        "class_name": det.get("class_name", "object"),
+                        "last_frame_idx": idx
+                    }
+            else:
+                # Match new detections against active tracks
+                matched_tracks = set()
+                matched_dets = set()
+
+                # Build candidate pairs (score, trk_id, det_idx)
+                candidates = []
+                for trk_id, trk_info in active_tracks.items():
+                    # Only match if seen recently (within last 5 frames)
+                    if idx - trk_info["last_frame_idx"] > 5:
+                        continue
+
+                    tb = trk_info["bbox"]
+                    tc = trk_info["center"]
+                    t_cls = trk_info["class_name"]
+
+                    for d_i, det in enumerate(frame_dets):
+                        d_cls = det.get("class_name", "object")
+                        if d_cls != t_cls:
+                            continue
+
+                        db = det["bbox_xyxy"]
+                        dc = det["pixel_center"]
+
+                        # Compute IoU
+                        x_left = max(tb[0], db[0])
+                        y_top = max(tb[1], db[1])
+                        x_right = min(tb[2], db[2])
+                        y_bottom = min(tb[3], db[3])
+
+                        if x_right > x_left and y_bottom > y_top:
+                            intersection = (x_right - x_left) * (y_bottom - y_top)
+                            area1 = (tb[2] - tb[0]) * (tb[3] - tb[1])
+                            area2 = (db[2] - db[0]) * (db[3] - db[1])
+                            union = area1 + area2 - intersection
+                            iou = intersection / max(1.0, union)
+                        else:
+                            iou = 0.0
+
+                        # Compute centroid distance
+                        dist = np.hypot(tc[0] - dc[0], tc[1] - dc[1])
+                        # Proximity score (decaying over 200 pixels)
+                        dist_score = max(0.0, 1.0 - (dist / 200.0))
+
+                        # Combined score: IoU weighted, spatial proximity fallback
+                        score = max(iou, 0.5 * dist_score)
+                        if score > 0.15:
+                            candidates.append((score, trk_id, d_i))
+
+                # Sort by score descending
+                candidates.sort(key=lambda x: x[0], reverse=True)
+
+                for score, trk_id, d_i in candidates:
+                    if trk_id in matched_tracks or d_i in matched_dets:
+                        continue
+                    matched_tracks.add(trk_id)
+                    matched_dets.add(d_i)
+
+                    det = frame_dets[d_i]
+                    det["track_id"] = trk_id
+                    det["id"] = f"TRK_{trk_id}"
+                    det["detection_id"] = f"TRK_{trk_id}"
+                    active_tracks[trk_id]["bbox"] = det["bbox_xyxy"]
+                    active_tracks[trk_id]["center"] = det["pixel_center"]
+                    active_tracks[trk_id]["last_frame_idx"] = idx
+
+                # Assign new track IDs to unmatched detections
+                for d_i, det in enumerate(frame_dets):
+                    if d_i not in matched_dets:
+                        trk_id = next_track_id
+                        next_track_id += 1
+                        det["track_id"] = trk_id
+                        det["id"] = f"TRK_{trk_id}"
+                        det["detection_id"] = f"TRK_{trk_id}"
+                        active_tracks[trk_id] = {
+                            "bbox": det["bbox_xyxy"],
+                            "center": det["pixel_center"],
+                            "class_name": det.get("class_name", "object"),
+                            "last_frame_idx": idx
+                        }
+
+            all_tracked_detections.append(frame_dets)
 
         return all_tracked_detections
 
@@ -311,7 +385,10 @@ class YOLODetector:
                     class_name = raw_class_name
                     detection_label = raw_class_name.upper()
 
+                det_uid = f"TRK_{track_id}" if track_id is not None else f"DET_{frame_idx:04d}_{len(out_records)+1:03d}"
                 rec = {
+                    "id": det_uid,
+                    "detection_id": det_uid,
                     "frame_id": frame_id,
                     "frame_idx": frame_idx,
                     "source_frame": frame_id,
@@ -322,6 +399,7 @@ class YOLODetector:
                     "bbox_xyxy": [x1, y1, x2, y2],
                     "bbox_center": [cx, cy],
                     "pixel_center": (cx, cy),
+                    "center": (cx, cy),
                     "bbox": [x1, y1, x2, y2],  # Legacy compatibility key
                     "bbox_width": bw,
                     "bbox_height": bh,
@@ -406,12 +484,11 @@ class YOLODetector:
 
                 # Flooded houses typically have large pixel area (>2000px) or roof aspect ratio (0.5 to 2.0)
                 if box_area > 2000 or (0.5 <= aspect_ratio <= 2.0 and box_area > 800):
-                    logger.info(f"[ANTI-CONFUSION] False boat detected on house roof (area={box_area}px) -> Flagged as INVALID_BOAT_DETECTION")
+                    logger.info(f"[ANTI-CONFUSION] False boat detected on house roof (area={box_area}px) -> Remapped to structure/building")
+                    r["class_name"] = "building"
+                    r["raw_class_name"] = "building"
                     r["validated_detection_confidence"] = 0.0
-                    r["location_status"] = "FALSE_POSITIVE_DETECTION"
-                    r["validation_note"] = "COCO boat misclassification on flooded structure roof."
-                    # Do not pass false boat into disaster incidents
-                    continue
+                    r["validation_note"] = "COCO boat misclassification remapped to flooded structure roof."
                 else:
                     r["validated_detection_confidence"] = r["raw_detector_confidence"]
             out.append(r)
@@ -467,3 +544,5 @@ class YOLODetector:
                 torch.cuda.empty_cache()
             gc.collect()
             logger.info("[INFO] Released YOLO model from GPU memory.")
+
+    detect_frame = detect_image

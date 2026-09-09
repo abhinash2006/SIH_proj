@@ -52,3 +52,17 @@ def test_yolo_tiled_inference_tiling_generation():
         assert 0 <= tx1 < tx2 <= 2000
         assert 0 <= ty1 < ty2 <= 1500
     detector.release()
+
+def test_yolo_track_frames_multi_frame():
+    detector = YOLODetector(model_name="yolo26n.pt", confidence=0.08)
+    
+    # Create two synthetic frames: empty
+    f1 = np.zeros((720, 1280, 3), dtype=np.uint8)
+    f2 = np.zeros((720, 1280, 3), dtype=np.uint8)
+    
+    res = detector.track_frames([f1, f2], frame_ids=["frame_0000.jpg", "frame_0001.jpg"])
+    assert len(res) == 2
+    assert isinstance(res[0], list)
+    assert isinstance(res[1], list)
+    detector.release()
+

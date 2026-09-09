@@ -22,12 +22,12 @@ class FrameSelector:
         self.config = config or {}
         sel_cfg = self.config.get("frame_selection", {})
         
-        self.sharpness_threshold = sel_cfg.get("sharpness_threshold", 40.0)
+        self.sharpness_threshold = sel_cfg.get("sharpness_threshold", 20.0)
         self.underexposure_threshold = sel_cfg.get("underexposure_threshold", 0.25)
         self.overexposure_threshold = sel_cfg.get("overexposure_threshold", 0.40)
         self.min_brightness = sel_cfg.get("min_brightness", 15.0)
         self.sky_max_ratio = sel_cfg.get("sky_max_ratio", 0.75)
-        self.similarity_threshold = sel_cfg.get("similarity_threshold", 0.985)
+        self.similarity_threshold = sel_cfg.get("similarity_threshold", 0.994)
         self.max_selected_frames = sel_cfg.get("max_selected_frames", 24)
 
     @staticmethod

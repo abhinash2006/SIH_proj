@@ -11,22 +11,22 @@ class SceneSegmentationAnalyzer:
     @staticmethod
     def segment_water_candidates(rgb_bgr_img: np.ndarray) -> Tuple[np.ndarray, float]:
         """
-        Segments water candidates based on strict HSV water spectrum & specular reflection characteristics.
+        Segments water candidates across multi-spectral regimes: blue/cyan and turbid/muddy floodwater.
         Returns:
             water_candidate_mask: [H, W] uint8 binary mask (255 for water, 0 for land)
             water_coverage_ratio: float ratio in [0.0, 1.0]
         """
-        hsv = cv2.cvtColor(rgb_bgr_img, cv2.COLOR_BGR2HSV)
-        
-        # Water HSV range: true water bodies and flooded water spectrum (blue/cyan/dark blue)
-        lower_blue = np.array([85, 40, 30])
-        upper_blue = np.array([135, 255, 240])
-        water_candidate_mask = cv2.inRange(hsv, lower_blue, upper_blue)
-
-        # Morphological opening to remove small scattered pixel noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-        water_candidate_mask = cv2.morphologyEx(water_candidate_mask, cv2.MORPH_OPEN, kernel)
-        water_candidate_mask = cv2.morphologyEx(water_candidate_mask, cv2.MORPH_CLOSE, kernel)
+        try:
+            from src.flood_analyzer import FloodAnalyzer
+            water_candidate_mask = FloodAnalyzer.extract_water_candidates(rgb_bgr_img)
+        except Exception:
+            hsv = cv2.cvtColor(rgb_bgr_img, cv2.COLOR_BGR2HSV)
+            lower_blue = np.array([85, 40, 30])
+            upper_blue = np.array([135, 255, 240])
+            water_candidate_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
+            water_candidate_mask = cv2.morphologyEx(water_candidate_mask, cv2.MORPH_OPEN, kernel)
+            water_candidate_mask = cv2.morphologyEx(water_candidate_mask, cv2.MORPH_CLOSE, kernel)
 
         coverage_ratio = float(np.mean(water_candidate_mask > 0))
         return water_candidate_mask, coverage_ratio
