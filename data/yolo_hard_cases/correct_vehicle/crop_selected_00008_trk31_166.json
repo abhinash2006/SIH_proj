@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00008.jpg",
+  "frame_idx": 8,
+  "track_id": 31,
+  "raw_yolo_class": "car",
+  "raw_yolo_confidence": 0.3617,
+  "validated_class": "VEHICLE",
+  "validation_confidence": 0.3617,
+  "validation_evidence": "Vehicle geometry confirmed (area=616px, aspect=1.27, water overlap=13%).",
+  "original_bbox": [
+    776,
+    566,
+    798,
+    594
+  ],
+  "cropped_bbox": [
+    773,
+    562,
+    801,
+    598
+  ],
+  "image_width": 1280,
+  "image_height": 720,
+  "category": "correct_vehicle"
+}

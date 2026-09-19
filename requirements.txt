@@ -23,8 +23,21 @@ einops>=0.7.0
 timm>=0.9.0
 pyyaml>=6.0
 
+# Detection & Segmentation
+ultralytics>=8.3.0
+
+# Backend & Web API
+fastapi>=0.110.0
+uvicorn>=0.28.0
+python-multipart>=0.0.9
+pydantic>=2.6.0
+
+# Georeferencing
+pyproj>=3.6.0
+
 # Web Application & UI
 gradio>=4.0.0
 
 # Testing & Quality
 pytest>=7.4.0
+pytest-cov>=4.1.0

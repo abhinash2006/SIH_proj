@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00008.jpg",
+  "frame_idx": 8,
+  "track_id": 33,
+  "raw_yolo_class": "truck",
+  "raw_yolo_confidence": 0.308,
+  "validated_class": "VEHICLE",
+  "validation_confidence": 0.308,
+  "validation_evidence": "Vehicle geometry confirmed (area=10212px, aspect=2.14, water overlap=1%).",
+  "original_bbox": [
+    1130,
+    570,
+    1278,
+    639
+  ],
+  "cropped_bbox": [
+    1108,
+    560,
+    1280,
+    649
+  ],
+  "image_width": 1280,
+  "image_height": 720,
+  "category": "correct_vehicle"
+}

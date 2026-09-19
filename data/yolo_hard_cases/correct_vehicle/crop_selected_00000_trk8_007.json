@@ -3,21 +3,21 @@
   "frame_idx": 0,
   "track_id": 8,
   "raw_yolo_class": "car",
-  "raw_yolo_confidence": 0.1852,
+  "raw_yolo_confidence": 0.3518,
   "validated_class": "VEHICLE",
-  "validation_confidence": 0.1852,
-  "validation_evidence": "Vehicle geometry confirmed (area=608px, aspect=2.38, water overlap=0%).",
+  "validation_confidence": 0.3518,
+  "validation_evidence": "Vehicle geometry confirmed (area=2145px, aspect=1.41, water overlap=7%).",
   "original_bbox": [
-    1013,
-    223,
-    1051,
-    239
+    731,
+    499,
+    770,
+    554
   ],
   "cropped_bbox": [
-    1008,
-    221,
-    1056,
-    241
+    726,
+    491,
+    775,
+    562
   ],
   "image_width": 1280,
   "image_height": 720,

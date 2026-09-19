@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00002.jpg",
+  "frame_idx": 2,
+  "track_id": 14,
+  "raw_yolo_class": "truck",
+  "raw_yolo_confidence": 0.3533,
+  "validated_class": "VEHICLE",
+  "validation_confidence": 0.5033,
+  "validation_evidence": "Building-like geometry (area=84216px > 12000px, aspect=1.56); remapped from oversized vehicle. | Temporal track consistency overrode transient BUILDING -> VEHICLE (vote ratio: 1.00, 0 switches).",
+  "original_bbox": [
+    143,
+    486,
+    506,
+    718
+  ],
+  "cropped_bbox": [
+    89,
+    452,
+    560,
+    720
+  ],
+  "image_width": 1280,
+  "image_height": 720,
+  "category": "correct_vehicle"
+}

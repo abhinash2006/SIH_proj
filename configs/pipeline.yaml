@@ -1,0 +1,104 @@
+# Pipeline Configuration for Single-Pass Drone 3D Reconstruction System
+
+pipeline:
+  name: "single_pass_drone_3d"
+  version: "1.0.0"
+  reconstruction_backend: "hybrid" # Options: "hybrid", "vggt", "colmap"
+
+  # ==============================================================================
+  # Video Processing & Frame Extraction
+  # ==============================================================================
+  video:
+    frame_sampling_fps: 2.0 # Extract 2 frames per second of drone video
+    max_frames_to_extract: 600
+    save_format: "jpg"
+    jpeg_quality: 95
+
+  # ==============================================================================
+  # Frame Quality Filtering
+  # ==============================================================================
+  quality:
+    min_blur_score: 50.0 # Laplacian variance threshold (higher = sharper)
+    min_brightness: 30.0 # Min grayscale mean (reject severe underexposure)
+    max_brightness: 235.0 # Max grayscale mean (reject severe overexposure)
+    min_contrast: 20.0 # Min standard deviation
+    min_entropy: 4.0 # Min Shannon entropy
+    duplicate_threshold: 0.98 # Structural similarity threshold to drop static frames
+
+  # ==============================================================================
+  # Intelligent Keyframe Selection
+  # ==============================================================================
+  keyframes:
+    min_distance_threshold: 0.15 # Min visual / histogram distance between keyframes
+    min_frame_gap: 3 # Min frames between keyframes
+    max_frame_gap: 30 # Force keyframe after max gap even with low motion
+    target_keyframe_count: 60 # Optimal keyframe count for UAV trajectory
+    prefer_sharpest: true
+
+  # ==============================================================================
+  # Dynamic Object Filtering (YOLO + SAM 2)
+  # ==============================================================================
+  dynamic_objects:
+    enabled: true
+    mode: "yolo+sam2" # "yolo+sam2", "yolo_only", "sam2_only", "disabled"
+    mask_dilation_kernel: 5 # Pixels to dilate mask to avoid edge leakage
+    save_visualization: true
+
+  # ==============================================================================
+  # Depth Comparison & Fusion
+  # ==============================================================================
+  depth:
+    primary_source: "vggt"
+    compare_with_depth_anything: true
+    fusion_mode: "comparison" # "vggt", "depth_anything", "comparison", "hybrid"
+    confidence_threshold: 0.25
+
+  # ==============================================================================
+  # GPS, IMU & Georeferencing
+  # ==============================================================================
+  georeference:
+    enabled: true
+    coordinate_system: "ENU" # "ENU" (East-North-Up) or "UTM"
+    ransac_iterations: 1000
+    ransac_threshold_m: 2.5 # Max inlier distance in meters for trajectory alignment
+    use_rtk_weights: false
+
+  # ==============================================================================
+  # Point Cloud Generation & Filtering (Open3D)
+  # ==============================================================================
+  pointcloud:
+    voxel_size: 0.05 # 5cm voxel downsampling
+    statistical_outlier_removal:
+      enabled: true
+      nb_neighbors: 20
+      std_ratio: 2.0
+    radius_outlier_removal:
+      enabled: true
+      nb_points: 16
+      radius: 0.15
+    min_confidence: 0.3
+    filter_dynamic_points: true
+
+  # ==============================================================================
+  # Mesh Reconstruction & Texturing
+  # ==============================================================================
+  mesh:
+    method: "poisson" # "poisson" or "ball_pivoting"
+    poisson_depth: 9
+    normal_estimation_radius: 0.2
+    normal_max_nn: 30
+    density_percentile_cutoff: 0.05 # Remove low-density mesh boundary artifacts
+    simplify_mesh: true
+    target_triangle_count: 250000
+    export_formats:
+      - "glb" # Preferred for Web 3D visualization
+      - "obj"
+      - "ply"
+
+  # ==============================================================================
+  # Output & Logging
+  # ==============================================================================
+  output:
+    base_dir: "output"
+    save_intermediate_steps: true
+    generate_html_report: true

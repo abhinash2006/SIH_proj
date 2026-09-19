@@ -3,21 +3,21 @@
   "frame_idx": 7,
   "track_id": 39,
   "raw_yolo_class": "person",
-  "raw_yolo_confidence": 0.3612,
+  "raw_yolo_confidence": 0.1226,
   "validated_class": "PERSON",
-  "validation_confidence": 0.3612,
-  "validation_evidence": "Valid aerial person geometry (area=336px, aspect=1.71).",
+  "validation_confidence": 0.1226,
+  "validation_evidence": "Valid aerial person geometry (area=144px, aspect=2.25).",
   "original_bbox": [
-    363,
-    288,
-    377,
-    312
+    658,
+    511,
+    666,
+    529
   ],
   "cropped_bbox": [
-    361,
-    285,
-    379,
-    315
+    657,
+    509,
+    667,
+    531
   ],
   "image_width": 1280,
   "image_height": 720,

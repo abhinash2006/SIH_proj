@@ -1,0 +1,28 @@
+{
+  "num_flights": 5,
+  "num_physical_images": 123,
+  "num_generated_sequences": 108,
+  "train_sequences": 63,
+  "val_sequences": 14,
+  "test_sequences": 31,
+  "seqs_per_flight": {
+    "2025-10-08-11-10-20": 14,
+    "2025-10-08-16-04-49": 17,
+    "2025-10-08-16-10-29": 32,
+    "2025-10-14-11-20-51": 14,
+    "2025-10-14-12-32-26": 31
+  },
+  "frames_per_sequence": 4,
+  "mean_depth_coverage": 78.88,
+  "min_depth_coverage": 50.45,
+  "max_depth_coverage": 93.88,
+  "invalid_depth_percentage": 21.12,
+  "mean_reprojection_error_px": 0.5744,
+  "median_reprojection_error_px": 0.5586,
+  "max_reprojection_error_px": 0.8375,
+  "mean_consecutive_baseline_m": 5.148,
+  "median_consecutive_baseline_m": 3.985,
+  "min_consecutive_baseline_m": 1.485,
+  "max_consecutive_baseline_m": 28.024,
+  "mean_4frame_window_span_m": 15.442
+}

@@ -1,0 +1,25 @@
+{
+  "frame_id": "selected_00015.jpg",
+  "frame_idx": 15,
+  "track_id": 65,
+  "raw_yolo_class": "boat",
+  "raw_yolo_confidence": 0.4684,
+  "validated_class": "BOAT",
+  "validation_confidence": 0.4684,
+  "validation_evidence": "Boat detected on dry ground with vehicle dimensions (area=1881px, aspect=1.73); remapped to VEHICLE. | Temporal track consistency overrode transient VEHICLE -> BOAT (vote ratio: 1.00, 0 switches).",
+  "original_bbox": [
+    810,
+    337,
+    867,
+    370
+  ],
+  "cropped_bbox": [
+    802,
+    333,
+    875,
+    374
+  ],
+  "image_width": 1280,
+  "image_height": 720,
+  "category": "correct_boat"
+}

@@ -1,228 +1,306 @@
-# AI-Powered Drone Disaster Inspection & 3D Rescue Mapping System (Drone-VGGT + Depth Anything V2)
+# AeroScan 3D — Autonomous UAV Single-Pass 3D Reconstruction System
+### Smart India Hackathon (SIH) Platform: Multi-View Aerial Drone Video to Georeferenced 3D Digital Twin
 
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10-3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![PyTorch 2.6.0+cu124](https://img.shields.io/badge/PyTorch-2.6.0%2Bcu124-red.svg)](https://pytorch.org/)
-[![License: CC BY-NC 4.0 / Apache 2.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0%20%2F%20Apache--2.0-lightgrey.svg)](MODEL_CARD.md)
-
-An autonomous, production-grade 3D reconstruction and AI spatial rescue intelligence platform designed for **Smart India Hackathon (SIH)** disaster response applications. The system transforms continuous aerial drone video into metric 3D point clouds, surface meshes, monocular depth validation maps, 3D object/person locations, structural damage alerts, and automated HTML rescue reports.
-
----
-
-## 1. SIH Problem Statement & Proposed Solution
-
-### The Problem
-During natural disasters (floods, earthquakes, landslides, fires), emergency responders receive extensive raw drone video footage. Manually scanning hundreds of 2D frames is time-consuming and fails to provide an immediate 3D spatial understanding of victims, hazardous terrain, damaged infrastructure, or blocked access routes.
-
-### The Solution
-Our system converts raw aerial drone video into a **Metric 3D Reconstruction** paired with **AI Disaster Inspection**:
-1. **Multi-View Geometry**: Meta's **VGGT-1B** foundation transformer predicts camera poses, metric depth, and 3D point maps.
-2. **Depth Validation**: **Depth Anything V2 Small** (Apache-2.0) estimates dense monocular depth for robust scale/shift alignment, exponential consistency scoring, and fused confidence filtering.
-3. **AI Rescue Intelligence**: YOLOv8 + 2D-to-3D projection detects visible victims/objects, projects bounding boxes into 3D world coordinates $(X, Y, Z)$, evaluates structural damage & flood hazards, and compiles actionable rescue priorities.
+[![Open3D 0.19.0](https://img.shields.io/badge/Open3D-0.19.0-green.svg)](https://www.open3d.org/)
+[![Ultralytics YOLO](https://img.shields.io/badge/YOLO-11n%2Fv8n-yellow.svg)](https://github.com/ultralytics/ultralytics)
+[![FastAPI Backend](https://img.shields.io/badge/FastAPI-0.110.0-teal.svg)](https://fastapi.tiangolo.com/)
+[![React Three.js](https://img.shields.io/badge/Frontend-React%20%2B%20Three.js-purple.svg)](https://threejs.org/)
 
 ---
 
-## 2. Integrated System Architecture
+## 1. Project Overview & Objective
+
+**AeroScan 3D** is an autonomous, single-pass visual geometry reconstruction platform designed for the Smart India Hackathon (SIH). It converts continuous aerial drone video (1080p/4K) along with flight telemetry (GPS, IMU, camera calibration) into metric, georeferenced 3D point clouds, textured surface meshes (GLB/OBJ/PLY), and interactive web visualizations.
+
+### The UAV Reconstruction Challenge
+In emergency response, infrastructure inspection, and disaster survey missions:
+1. **Dynamic Transient Interference**: Moving vehicles, pedestrians, and animals corrupt multi-view triangulation, creating floating ghosts and distorted surface geometry.
+2. **Computational Constraints**: High-resolution video processing must operate reliably on commodity hardware (e.g. laptop RTX 3050 with 4GB VRAM) without out-of-memory crashes.
+3. **Metric Georeferencing**: Unscaled camera poses must align with real-world WGS84 GPS coordinates to enable accurate distance and elevation measurements.
+
+---
+
+## 2. System Architecture
 
 ```text
-                                 🚁 DRONE VIDEO
-                                       │
-                                       ▼
-                              FRAME SELECTION
-                                       │
-                     ┌─────────────────┴─────────────────┐
-                     ▼                                   ▼
-            META VGGT-1B                         DEPTH ANYTHING V2
-         3D Geometry, Camera Poses,             Monocular Depth Validation
-         Depth & Point Map                               │
-                     │                                   │
-                     └─────────────────┬─────────────────┘
-                                       ▼
-                            3D RECONSTRUCTION
-                                       │
-                         ┌─────────────┴─────────────┐
-                         ▼                           ▼
-                 ULTRALYTICS YOLO             DISASTER MODELS
-                2D Object Perception           Flood / Structure /
-               (Person, Vehicle, etc.)          Damage Analysis
-                         │                           │
-                         └─────────────┬─────────────┘
-                                       ▼
-                               SPATIAL REASONING
-                             2D ➔ 3D Localization
-                                       │
-                                       ▼
-                              VALIDATED INCIDENT
-                                       │
-                     ┌─────────────────┼─────────────────┐
-                     ▼                 ▼                 ▼
-                 3D SCENE        INCIDENT TABLE     RISK ENGINE
-                     │                 │                 │
-                     └─────────────────┼─────────────────┘
-                                       ▼
-                              RESCUE DASHBOARD
+                     🚁 Aerial Drone Video (1080p / 4K)
+                                   │
+                     [1] Frame Extraction (FPS Sampling)
+                                   │
+                     [2] Frame Quality Filtering (Blur, Contrast, Exposure)
+                                   │
+                     [3] Intelligent Keyframe Selection
+                                   │
+              ┌────────────────────┴────────────────────┐
+              ▼                                         ▼
+   [4] YOLO Detection (Dynamic Objects)      [5] Monocular Depth (Optional)
+              │                                (Depth Anything V2)
+   [5] SAM 2 Precise Segmentation Masks                 │
+              │                                         │
+              └────────────────────┬────────────────────┘
+                                   │
+                     [6] VGGT 3D Geometry Engine
+                   (Modular Pretrained / Fine-Tuned)
+                                   │
+               Intrinsics, Extrinsics, Depth & Point Maps
+                                   │
+                     [7] Depth Comparison & Fusion
+                                   │
+               ┌───────────────────┴───────────────────┐
+               ▼                                       ▼
+     [8] Telemetry Ingestion                  [9] 3D Point Cloud Gen
+     (GPS WGS84/ENU + IMU)                     (Filtered static pixels)
+               │                                       │
+               └───────────────────┬───────────────────┘
+                                   │
+                   [10] Similarity Georeferencing
+                           (Umeyama / RANSAC)
+                                   │
+                   [11] Point Cloud Filtering (SOR / ROR / Voxel)
+                                   │
+                   [12] Surface Mesh Reconstruction (Poisson / BPA)
+                                   │
+                   [13] Sharp-Frame Texture Projection
+                                   │
+                   [14] Export (GLB / OBJ / PLY)
+                                   │
+               ┌───────────────────┴───────────────────┐
+               ▼                                       ▼
+     FastAPI Backend                          React + Three.js
+   (Async Background Jobs)                 (Interactive 3D Viewer)
 ```
 
 ---
 
-## 3. Core Technical Components
+## 3. Dynamic Object Removal: YOLO + SAM 2 Workflow
 
-- **VGGT-1B (`facebook/VGGT-1B`)**: Foundation 3D visual geometry model predicting unified camera poses, camera intrinsics ($K$), and 3D point maps across aerial drone frames.
-- **Depth Anything V2 (`vits`)**: Independent monocular depth estimation providing scale/shift validation and fused geometric confidence gating.
-- **Ultralytics YOLO (`yolo26n.pt` / `yolo11n.pt`)**: Isolated 2D perception layer for object detection and multi-frame tracking (`PERSON_DETECTED`, `VEHICLE`, etc.). Bounding boxes maintain original image resolution coordinates and map into VGGT 3D space via 2D$\rightarrow$3D reprojection.
-- **Disaster Context & Spatial Reasoning Engine**: Evaluates spatial relationships between 3D localized objects and flood/damage boundaries. Enforces strict rules (`PERSON_DETECTED` $\neq$ `VICTIM`, `VEHICLE` $\neq$ `BLOCKED_ROAD`, `WATER` $\neq$ `FLOOD`).
-
----
-
-## 4. Execution Modes & CLI
-
-### A. Environment Diagnostic Check
-Verify PyTorch, CUDA 12.4, GPU, and Ultralytics YOLO environment:
-```powershell
-python scripts/check_yolo_environment.py
-```
-
-### B. Run Complete Inspection Pipeline CLI
-```powershell
-python scripts/run_pipeline.py \
-    --input data/raw/uav_sequence/1121222322212102-4/images \
-    --use-vggt \
-    --use-depth-anything \
-    --use-yolo \
-    --yolo-model yolo26n.pt \
-    --yolo-confidence 0.35 \
-    --yolo-imgsz 640 \
-    --yolo-device auto
-```
-
-### C. Performance Benchmark
-Measure FPS, frame latency, peak VRAM, and detection statistics:
-```powershell
-python scripts/benchmark_yolo.py
-```
+Rather than treating SAM 2 as a replacement for YOLO, they operate in synergy:
+1. **YOLO (`yolo11n.pt`)**: Fast 2D object detection identifies transient dynamic classes (`person`, `car`, `truck`, `bus`, `motorcycle`, `bicycle`, `animal`) and extracts bounding boxes at original frame resolution. Static infrastructure (buildings, roads, terrain, vegetation, poles) is strictly preserved.
+2. **SAM 2 (`sam2_segmenter.py`)**: Takes YOLO bounding boxes as prompt anchors and generates pixel-accurate binary masks `[H, W]`.
+3. **Point Cloud Exclusion**: Pixels flagged in the dynamic mask are excluded prior to 3D point cloud unprojection, eliminating phantom dynamic artifacts from the reconstructed 3D mesh.
 
 ---
 
-## 5. Model Inventory & Licensing
+## 4. Modular VGGT Checkpoint Design & Replacement Guide
 
-| Component | Purpose | Checkpoint | License |
-| :--- | :--- | :--- | :--- |
-| **VGGT-1B** | Multi-View Cameras, Depth & Point Maps | `facebook/VGGT-1B` (4.8 GB) | **CC BY-NC 4.0** |
-| **Depth Anything V2 Small** | Monocular Depth Validation | `depth_anything_v2_vits.pth` (99 MB) | **Apache-2.0** |
-| **Ultralytics YOLO** | 2D Object Perception & Tracking | `yolo26n.pt` / `yolo11n.pt` (5.4 MB) | **AGPL-3.0 / Enterprise** |
-| **OpenCV / Open3D** | Image Refinement & Poisson Meshing | Classical Algorithms | **Apache 2.0 / MIT** |
+> [!IMPORTANT]
+> **Zero-Disruption Architecture for Fine-Tuned Model Integration**:
+> The VGGT model is fine-tuned separately. The application is designed so that VGGT is an isolated, modular component behind a standardized abstract adapter interface (`BaseVGGTAdapter`).
 
-For detailed third-party licensing compliance notes (including AGPL-3.0 requirements for Ultralytics YOLO), see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+### The Adapter Hierarchy
+```text
+                     BaseVGGTAdapter (Abstract Base Class)
+                               │
+            ┌──────────────────┼──────────────────┐
+            ▼                  ▼                  ▼
+  PretrainedVGGTAdapter  FineTunedVGGTAdapter  MockVGGTAdapter
+  (Official Meta 1B)     (Custom UAV Weights)  (CI / Fast Testing)
+```
+
+### How to Load the Fine-Tuned Checkpoint:
+When your fine-tuned VGGT checkpoint is ready:
+1. Place the checkpoint file at `models/vggt/finetuned/best_checkpoint.pth`.
+2. Update `configs/models.yaml`:
+   ```yaml
+   models:
+     vggt:
+       enabled: true
+       backend: "finetuned"
+       checkpoint: "models/vggt/finetuned/best_checkpoint.pth"
+   ```
+3. Alternatively, set the environment variable without editing any files:
+   ```powershell
+   $env:VGGT_CHECKPOINT="models/vggt/finetuned/best_checkpoint.pth"
+   ```
+The rest of the pipeline (YOLO, SAM 2, GPS georeferencing, Open3D reconstruction, Three.js viewer) continues to function identically without code modifications.
 
 ---
 
-## 6. System Directory Structure
+## 5. Reconstruction Modes
 
-```
-d:/Vggt/
-├── app.py                      # Interactive 7-Tab Gradio Web Dashboard
-├── configs/
-│   ├── config.yaml             # Main system hyperparameters
-│   └── disaster_config.yaml    # Disaster & hazard inspection settings
-├── data/
-│   └── raw/uav_sequence/       # Benchmark UAV drone flight sequence
-├── models/
-│   ├── VGGT-1B/                # Meta VGGT-1B weights (model.pt, 4.8 GB)
-│   └── depth_anything_v2/      # Depth Anything V2 Small (vits.pth, 99 MB, Apache-2.0)
-├── outputs/                    # Experiment outputs (A, B, C, D), PLY, HTML reports
-├── scripts/
-│   ├── download_dataset.py     # Automated UAV benchmark downloader
-│   ├── download_model.py       # Automated VGGT downloader
-│   ├── download_depth_anything.py # Depth Anything V2 downloader
-│   ├── run_pipeline.py         # Main 4-Experiment CLI runner
-│   └── demo.py                 # One-command SIH Demonstration script
-├── src/
-│   ├── video_processor.py      # Frame extraction & video decoding
-│   ├── frame_selector.py       # Laplacian blur & quality selection
-│   ├── vggt_inference.py       # Meta VGGT inference engine
-│   ├── depth_anything_v2.py    # Depth Anything V2 estimator engine
-│   ├── depth_alignment.py      # Robust scale/shift depth aligner
-│   ├── depth_consistency.py    # Exponential consistency analyzer
-│   ├── depth_confidence.py     # Fused confidence calculator
-│   ├── pointcloud_filter.py    # SOR + ROR + Depth-aware filter
-│   └── disaster_inspection/
-│       ├── object_detection.py # YOLOv8 person/vehicle/building detector
-│       ├── tracking.py         # Multi-frame persistent object tracker
-│       ├── geo_projection.py   # 2D-to-3D world coordinate projector
-│       ├── damage_detection.py # Structural damage & roof disruption detector
-│       ├── hazard_detection.py # Flood water, debris & smoke/fire hazard analyzer
-│       ├── segmentation.py     # Water & debris color/texture segmentation
-│       ├── incident_manager.py # SQLite & JSON disaster incident database
-│       ├── risk_scoring.py     # Interpretable risk score (LOW-CRITICAL)
-│       └── report_generator.py # HTML & JSON rescue report builder
-├── tests/                      # Pytest automated test suite (16 tests)
-├── MODEL_CARD.md               # Complete model inventory & licensing terms
-└── README.md                   # System documentation
-```
+Selectable via `--mode` or Web UI:
+- **Mode 3: Hybrid (Default Target)**: `Video → Keyframes → YOLO/SAM 2 → VGGT → GPS/IMU → Open3D → Mesh → Texturing → Three.js`.
+- **Mode 1: Pure VGGT**: Bypasses dynamic masking and uses direct VGGT predicted point maps and geometry.
+- **Mode 2: COLMAP Baseline**: Optional classical photogrammetry baseline for SfM feature matching and comparison.
 
 ---
 
-## 7. Installation & Environment Setup
+## 6. Installation & Environment Setup
 
 ### Prerequisites
-- **OS**: Windows 10/11, Linux (Ubuntu 20.04+)
-- **GPU**: NVIDIA GPU with >= 4 GB VRAM (Tested on RTX 3050 Laptop GPU & RTX 4090)
-- **Python**: 3.10 - 3.12
+- Windows 10/11 or Ubuntu 22.04 LTS
+- Python 3.10, 3.11, or 3.12
+- NVIDIA GPU with CUDA 12.4 (RTX 3050 4GB tested and optimized)
+- Node.js v18+ and npm
 
+### 1. Python Environment Setup
 ```powershell
-# 1. Activate environment
+# Clone or enter directory
+cd d:\Vggt
+
+# Activate virtual environment
 .\drone_vggt_env\Scripts\activate
 
-# 2. Verify PyTorch CUDA & dependencies
-pytest tests/ -v
+# Install dependencies
+pip install -r requirements.txt
 ```
 
----
-
-## 8. Execution Modes
-
-### A. SIH Demo Mode (For Judges & Evaluators)
-Run the one-command demonstration script:
+### 2. Frontend Setup
 ```powershell
-python scripts/demo.py
+cd frontend
+npm install
+npm run build
+cd ..
 ```
-This automatically loads the sample disaster drone sequence, runs all 4 Experiments (A, B, C, D), generates the 3D Point Cloud, builds the incident database, compiles `outputs/sih_demo/experiment_D/disaster_report.html`, and launches the interactive Gradio dashboard at `http://127.0.0.1:7860`.
 
-### B. End-to-End CLI Experiments (A, B, C, D)
-Run all 4 experiments from command line:
+---
+
+## 7. Model Checkpoint Downloads (Rule 31 Compliant)
+
+Check existing models and download safely without duplicates:
 ```powershell
-# Run full Disaster Inspection & 3D Rescue Mapping:
-python scripts/run_pipeline.py --input data/raw/uav_sequence/1121222322212102-4/images --mode all --max_frames 12
+# View model status
+python scripts/download_models.py
 
-# Run Baseline VGGT only:
-python scripts/run_pipeline.py --input data/raw/uav_sequence/1121222322212102-4/images --mode A --disable-depth-anything
+# Download specific models when needed:
+python scripts/download_models.py yolo11n
+python scripts/download_models.py depth_anything_v2
+python scripts/download_models.py sam2_1_small
 ```
 
-### C. Interactive Gradio Web Dashboard
-Launch the web UI:
+---
+
+## 8. Running the Application
+
+### Option A: Complete Web GUI (FastAPI + React + Three.js)
 ```powershell
-python app.py
+# Launch FastAPI backend with integrated React static app
+.\drone_vggt_env\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
-Open browser at `http://127.0.0.1:7860`.
+Open your browser at `http://localhost:8000` to access the AeroScan 3D Control Center:
+- Upload drone flight video (MP4/MOV).
+- Upload GPS telemetry log (CSV).
+- Monitor live pipeline progress and console logs.
+- Rotate, pan, zoom, measure distances, and toggle wireframes in the interactive Three.js 3D viewer.
+- Download `final.glb`, `final.ply`, and `final.obj`.
+
+### Option B: Command-Line Interface (CLI)
+```powershell
+# Generate sample test sequence
+python scripts/generate_sample_data.py
+
+# Run complete reconstruction pipeline
+python scripts/run_pipeline.py \
+    --input data/raw/sample_mission/synthetic_drone_flight.mp4 \
+    --gps data/raw/sample_mission/flight_gps.csv \
+    --mode hybrid \
+    --vggt-backend mock \
+    --mission-id sih_demo_run
+```
 
 ---
 
-## 9. The 4 Benchmark Experiments
+## 9. Telemetry Input Formats
 
-1. **Experiment A (Baseline)**: Raw selected frames $\rightarrow$ VGGT $\rightarrow$ 3D Point Cloud.
-2. **Experiment B (Depth Validation)**: VGGT + Depth Anything V2 $\rightarrow$ Robust Scale/Shift Alignment $\rightarrow$ Exponential Consistency Heatmaps.
-3. **Experiment C (Depth-Aware Reconstruction)**: VGGT + Depth Anything V2 $\rightarrow$ Fused Confidence Gating $\rightarrow$ Noise-free 3D Point Cloud.
-4. **Experiment D (AI Disaster Inspection & Rescue Mapping)**: Experiment C 3D model + YOLOv8 Person/Object Detection + 2D-to-3D Geo-Projection + Structural Damage & Flood Hazard Analysis + SQLite Incident Database + HTML Rescue Report.
+### GPS Telemetry CSV (`flight_gps.csv`)
+```csv
+timestamp,latitude,longitude,altitude
+0.0,28.613939,77.209021,45.0
+1.0,28.613959,77.209036,45.2
+2.0,28.613979,77.209051,45.3
+```
+
+### IMU Telemetry CSV (`flight_imu.csv`, Optional)
+```csv
+timestamp,ax,ay,az,gx,gy,gz,roll,pitch,yaw
+0.0,0.01,0.02,9.81,0.01,0.01,0.0,1.2,-3.5,45.0
+```
+
+### Camera Calibration JSON (`camera.json`, Optional)
+```json
+{
+  "camera_model": "PINHOLE",
+  "width": 1920,
+  "height": 1080,
+  "fx": 1420.5,
+  "fy": 1420.5,
+  "cx": 960.0,
+  "cy": 540.0,
+  "distortion_coefficients": [0.0, 0.0, 0.0, 0.0]
+}
+```
 
 ---
 
-| :--- | :--- | :--- | :--- |
-| **VGGT-1B** | Multi-View Cameras, Depth & Point Maps | `facebook/VGGT-1B` (4.8 GB) | **CC BY-NC 4.0** |
-| **Depth Anything V2 Small** | Monocular Depth Validation & Confidence | `depth_anything_v2_vits.pth` (99 MB) | **Apache 2.0** |
-| **YOLOv8n** | Person, Vehicle & Structure Detection | `yolov8n.pt` (6.2 MB) | **AGPL-3.0 / Open** |
-| **OpenCV / Open3D** | Image Refinement & Poisson Meshing | Classical Algorithms | **Apache 2.0 / MIT** |
+## 10. Automated Testing Suite
+
+Run the full automated test suite:
+```powershell
+.\drone_vggt_env\Scripts\python.exe -m pytest tests/ -v
+```
+
+### Test Coverage:
+- `tests/test_video_extractor.py`: Frame extraction and FPS sampling.
+- `tests/test_frame_quality.py`: Laplacian blur, contrast, and exposure quality scoring.
+- `tests/test_keyframes.py`: Intelligent keyframe selection and visual disparity.
+- `tests/test_yolo_detection.py`: Dynamic object bounding box extraction and class filtering.
+- `tests/test_sam2_segmenter.py`: SAM 2 mask generation and fallback mode.
+- `tests/test_vggt_model.py`: Modular adapter loading, predictions, and factory switching.
+- `tests/test_depth_anything.py`: Standardized DepthResult interface.
+- `tests/test_depth_fusion.py`: Relative-to-metric affine scale and shift alignment.
+- `tests/test_gps_georeference.py`: GPS CSV parsing, ENU projection, and Umeyama Sim(3) alignment.
+- `tests/test_pointcloud.py`: Point cloud generation and Open3D filtering.
+- `tests/test_mesh_export.py`: Surface mesh reconstruction and GLB/OBJ/PLY export.
+- `tests/test_evaluation_metrics.py`: Chamfer distance, RMSE, and trajectory error calculations.
+- `tests/test_smoke_e2e.py`: End-to-end mission reconstruction test.
 
 ---
 
-## 8. Responsible AI & Disaster Disclaimer
+## 11. Project Directory Structure
 
-> **IMPORTANT**: The AI predictions generated by this platform (person detections, structural damage alerts, flood hazard bounds) serve as **Decision Support** for search-and-rescue teams. All AI-flagged incidents require human responder field verification before initiating tactical operations.
+```text
+SinglePass3D/
+├── models/
+│   ├── vggt/
+│   │   ├── pretrained/           # Pretrained VGGT-1B checkpoint
+│   │   └── finetuned/            # Future fine-tuned VGGT checkpoint
+│   ├── depth_anything/           # Depth Anything V2 weights
+│   ├── yolo/                     # YOLO11 / YOLOv8 weights
+│   └── sam2/                     # SAM 2 weights
+│
+├── data/
+│   ├── raw/                      # Drone videos & GPS logs
+│   ├── frames/                   # Extracted video frames
+│   ├── selected_frames/          # Quality-filtered frames
+│   ├── keyframes/                # Intelligently selected keyframes
+│   ├── masks/                    # Dynamic exclusion masks
+│   └── output/                   # Mission artifacts
+│
+├── src/
+│   ├── video/                    # Frame extraction, quality scoring, keyframes
+│   ├── detection/                # Ultralytics YOLO & dynamic object filtering
+│   ├── segmentation/             # Meta SAM 2 segmenter & fallback
+│   ├── depth/                    # Depth Anything V2 estimator
+│   ├── geometry/                 # Modular VGGT model adapter & depth fusion
+│   ├── georeference/             # GPS ENU projection, IMU, Umeyama alignment
+│   ├── reconstruction/           # Open3D point clouds, filtering, Poisson mesh, texturing
+│   ├── evaluation/               # Chamfer distance, RMSE, trajectory metrics
+│   ├── output/                   # Output manager & report serializing
+│   └── pipeline/                 # End-to-end runner orchestrator
+│
+├── backend/                      # FastAPI asynchronous server
+├── frontend/                     # React + Three.js 3D WebGL viewer
+├── configs/
+│   ├── models.yaml               # Centralized model registry
+│   └── pipeline.yaml             # Pipeline filtering & reconstruction parameters
+├── tests/                        # Comprehensive unit & end-to-end tests
+├── scripts/
+│   ├── run_pipeline.py           # CLI runner
+│   ├── generate_sample_data.py   # Synthetic drone flight generator
+│   └── download_models.py        # Safe model downloader
+├── docker/                       # Dockerfile & docker-compose.yml
+├── requirements.txt
+└── README.md
+```

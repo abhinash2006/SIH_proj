@@ -1,0 +1,14 @@
+{
+  "checkpoint_loaded": true,
+  "first_batch_shape": "torch.Size([1, 4, 3, 392, 392])",
+  "fwd_time_s": 20.63,
+  "camera_loss": 0.09704,
+  "depth_loss": 0.071465,
+  "total_loss": 1.170455,
+  "bwd_time_s": 7.94,
+  "frozen_grad_leaks": 0,
+  "trainable_finite_grads": 73,
+  "trainable_nan_grads": 0,
+  "optimizer_step_success": true,
+  "has_nan_inf": false
+}
