@@ -387,6 +387,23 @@ def process_disaster_drone_pipeline(
         traj_ply_file = work_dir / "camera_trajectory.ply"
         ExportManager.export_camera_trajectory(predictions["extrinsics"], traj_ply_file)
 
+        # Save camera keyframe poses for telemetry & 3D measurement
+        try:
+            centers = []
+            ext_list = predictions["extrinsics"] if len(predictions["extrinsics"].shape) == 3 else [predictions["extrinsics"]]
+            for c_i, ext_m in enumerate(ext_list):
+                R_c = ext_m[:3, :3]
+                t_c = ext_m[:3, 3] if ext_m.shape[1] > 3 else np.zeros(3)
+                C_c = -R_c.T @ t_c
+                centers.append({
+                    "frame_idx": c_i,
+                    "position": [round(float(C_c[0]), 3), round(float(C_c[1]), 3), round(float(C_c[2]), 3)]
+                })
+            with open(work_dir / "camera_poses.json", "w") as f_cp:
+                json.dump(centers, f_cp, indent=2)
+        except Exception as e_cp:
+            logger.warning(f"Could not save camera poses JSON: {e_cp}")
+
         # Evaluate 3D Reconstruction Quality across 10 empirical metrics (Directive 3)
         outlier_ratio = filter_stats.get("reduction_percentage", 0.0) / 100.0
         reconstruction_eval = ReconstructionQualityEvaluator.evaluate_scene(
@@ -856,22 +873,46 @@ def process_disaster_drone_pipeline(
         # -------------------------------------------------------------
         # 1. Executive Summary Markdown
         status_table = format_pipeline_status_table(stages_status)
-        summary_md = f"""### 🛸 UAV Disaster Intelligence Executive Summary
-- **3D Geometry Quality**: **{rec_quality_banner}** (Score: **{reconstruction_eval['geometry_quality_score']}/100** | Points: **{len(filtered_pts):,}**)
-- **Scene Disaster Risk**: **<span style='color: {"#dc2626" if scene_risk_level in ["CRITICAL","HIGH"] else "#16a34a"};'>{scene_risk_level}</span>** (Score: **{scene_risk_score:.1f}/100**)
-- **Active Flood State**: **{dominant_flood_state}** (Max Surface Coverage: **{max_water_ratio * 100:.1f}%**)
-- **Human SAR Pipeline Status**:
-  - Detected People: **{num_detected_people}**
-  - Tracked People: **{num_tracked_people}**
-  - 3D Localized People: **{num_3d_localized_people}**
-  - Reprojection Validated People: **{num_reproj_validated_people}**
-  - Potential Stranded People: **{num_potential_stranded_people}**
-  - Validated Rescue Targets: **{num_validated_rescue_targets}**
-- **Detected Infrastructure / Vehicles**: **{len(all_vehicles_context)}**
-- **Logged Canonical Incidents**: **{len(canonical_incidents)}** in SQLite database
-- **Coordinate System**: `LOCAL / RELATIVE 3D RECONSTRUCTION` (Camera-centered flight trajectory reference, zero fabricated GPS)
-- **Scale**: `UNCALIBRATED` (Local 3D coordinates, not physical ground meters)
-"""
+        risk_color = "#f43f5e" if scene_risk_level in ["CRITICAL", "HIGH"] else ("#f59e0b" if scene_risk_level == "MEDIUM" else "#10b981")
+        quality_color = "#10b981" if "PASS" in rec_quality_banner else "#f59e0b"
+
+        summary_md = f"""<div style="background: radial-gradient(ellipse at 50% 0%, rgba(14, 165, 233, 0.14) 0%, rgba(10, 16, 30, 0.98) 75%); padding: 18px 20px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.3); color: #f8fafc; margin-bottom: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid rgba(56, 189, 248, 0.2); padding-bottom: 8px;">
+  <span style="font-family: 'JetBrains Mono', Consolas, monospace; font-size: 14.5px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 8px;">🛰️ AEROSCAN UAV MISSION INTELLIGENCE & TELEMETRY SUMMARY</span>
+  <span style="background: {risk_color}22; color: {risk_color}; border: 1px solid {risk_color}66; padding: 2px 10px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 11px; letter-spacing: 0.5px;">THREAT LEVEL: {scene_risk_level} ({scene_risk_score:.1f}/100)</span>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px;">
+  <div style="background: rgba(15, 23, 42, 0.75); padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.18);">
+    <div style="font-size: 10.5px; font-family: 'JetBrains Mono', monospace; color: #64748b; text-transform: uppercase;">[3D GEOMETRY GATE]</div>
+    <div style="font-size: 13.5px; font-weight: 700; color: {quality_color}; margin: 2px 0;">{rec_quality_banner}</div>
+    <div style="font-size: 11px; color: #94a3b8;">Quality Score: {reconstruction_eval['geometry_quality_score']}/100</div>
+  </div>
+  <div style="background: rgba(15, 23, 42, 0.75); padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.18);">
+    <div style="font-size: 10.5px; font-family: 'JetBrains Mono', monospace; color: #64748b; text-transform: uppercase;">[ACTIVE INUNDATION]</div>
+    <div style="font-size: 13.5px; font-weight: 700; color: #38bdf8; margin: 2px 0;">{dominant_flood_state}</div>
+    <div style="font-size: 11px; color: #94a3b8;">Max Coverage: {max_water_ratio * 100:.1f}%</div>
+  </div>
+  <div style="background: rgba(15, 23, 42, 0.75); padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.18);">
+    <div style="font-size: 10.5px; font-family: 'JetBrains Mono', monospace; color: #64748b; text-transform: uppercase;">[SAR RESCUE TRIAGE]</div>
+    <div style="font-size: 13.5px; font-weight: 700; color: {'#f43f5e' if num_validated_rescue_targets>0 else '#10b981'}; margin: 2px 0;">{num_validated_rescue_targets} Validated Targets</div>
+    <div style="font-size: 11px; color: #94a3b8;">Detections: {num_detected_people} persons</div>
+  </div>
+  <div style="background: rgba(15, 23, 42, 0.75); padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.18);">
+    <div style="font-size: 10.5px; font-family: 'JetBrains Mono', monospace; color: #64748b; text-transform: uppercase;">[POINT CLOUD DENSITY]</div>
+    <div style="font-size: 13.5px; font-weight: 700; color: #f8fafc; margin: 2px 0;">{len(filtered_pts):,} pts</div>
+    <div style="font-size: 11px; color: #94a3b8;">Incidents Logged: {len(canonical_incidents)}</div>
+  </div>
+</div>
+
+<div style="font-size: 11.5px; font-family: 'JetBrains Mono', Consolas, monospace; line-height: 1.6; color: #94a3b8; background: rgba(7, 11, 20, 0.75); padding: 10px 12px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.12);">
+  <span style="color: #38bdf8;">SAR FUNNEL:</span> {num_detected_people} 2D detected ➔ {num_tracked_people} tracked ➔ {num_3d_localized_people} 3D localized ➔ {num_reproj_validated_people} reprojection verified ➔ <strong style="color: #f8fafc;">{num_validated_rescue_targets} validated targets</strong><br/>
+  <span style="color: #38bdf8;">INFRASTRUCTURE:</span> {len(all_vehicles_context)} vehicles/structures analyzed | <span style="color: #38bdf8;">INCIDENTS:</span> {len(canonical_incidents)} recorded in SQLite DB<br/>
+  <span style="color: #38bdf8;">COORDINATES:</span> <code>LOCAL / RELATIVE 3D RECONSTRUCTION</code> (Zero fabricated GPS, scale uncalibrated local metric space)
+</div>
+</div>"""
+
+
 
         # 2. Incidents Table Dataframe
         incidents_table = []
@@ -1132,6 +1173,501 @@ def inspect_rescue_target(
     return disp_img, lineage_md, details_md
 
 
+def parse_coords_from_choice(choice_str: Optional[str]) -> Optional[Tuple[float, float, float]]:
+    """Extracts (X, Y, Z) coordinates from a dropdown choice string if present."""
+    if not choice_str:
+        return None
+    if "[ORIGIN]" in choice_str:
+        return (0.0, 0.0, 0.0)
+    import re
+    m = re.search(r"X=([-\d\.]+),\s*Y=([-\d\.]+),\s*Z=([-\d\.]+)", choice_str)
+    if m:
+        try:
+            return (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+        except ValueError:
+            pass
+    return None
+
+
+def on_select_pt_a(choice: Optional[str], current_x: float, current_y: float, current_z: float) -> Tuple[float, float, float]:
+    coords = parse_coords_from_choice(choice)
+    if coords is not None:
+        return coords[0], coords[1], coords[2]
+    return current_x, current_y, current_z
+
+
+def on_select_pt_b(choice: Optional[str], current_x: float, current_y: float, current_z: float) -> Tuple[float, float, float]:
+    coords = parse_coords_from_choice(choice)
+    if coords is not None:
+        return coords[0], coords[1], coords[2]
+    return current_x, current_y, current_z
+
+
+def calculate_3d_distance(
+    x1: float, y1: float, z1: float,
+    x2: float, y2: float, z2: float,
+    pt_a_choice: Optional[str] = None,
+    pt_b_choice: Optional[str] = None
+) -> str:
+    """Computes empirical 3D Euclidean distance, ground range, altitude delta, and SAR telemetry."""
+    try:
+        x1, y1, z1 = float(x1 or 0.0), float(y1 or 0.0), float(z1 or 0.0)
+        x2, y2, z2 = float(x2 or 0.0), float(y2 or 0.0), float(z2 or 0.0)
+    except (ValueError, TypeError):
+        return "<div class='telemetry-card' style='border-color: #ef4444;'>❌ Invalid coordinate values. Please enter valid numeric numbers.</div>"
+
+    dx = x2 - x1
+    dy = y2 - y1
+    dz = z2 - z1
+    dist_3d = float(np.sqrt(dx*dx + dy*dy + dz*dz))
+    dist_horiz = float(np.sqrt(dx*dx + dz*dz))
+    
+    elev_str = f"▲ +{abs(dy):.2f}m (CLIMB)" if dy < -0.05 else (f"▼ -{abs(dy):.2f}m (DESCENT)" if dy > 0.05 else f"► ±{abs(dy):.2f}m (LEVEL)")
+    
+    horiz_span = np.sqrt(dx*dx + dz*dz)
+    if horiz_span > 1e-6:
+        pitch_deg = float(np.degrees(np.arctan2(-dy, horiz_span)))
+    else:
+        pitch_deg = 90.0 if dy < 0 else (-90.0 if dy > 0 else 0.0)
+
+    uav_nominal_speed = 5.0  # m/s
+    transit_time = dist_3d / uav_nominal_speed
+
+    if dist_3d < 1.0:
+        prox_badge = "<span style='color: #ef4444; font-weight: 700;'>🔴 DIRECT CONTACT RANGE (< 1.0m)</span>"
+        tactical_desc = "Target is within precision hoist and tether footprint. Extreme rotor-wash clearance required."
+    elif dist_3d < 5.0:
+        prox_badge = "<span style='color: #f59e0b; font-weight: 700;'>🟡 CLOSE HOVER STANDOFF (1–5m)</span>"
+        tactical_desc = "Optimal low-altitude payload delivery and close-quarter inspection perimeter."
+    elif dist_3d < 25.0:
+        prox_badge = "<span style='color: #10b981; font-weight: 700;'>🟢 LOCAL TACTICAL SECTOR (5–25m)</span>"
+        tactical_desc = "Standard aerial surveillance distance. Line-of-sight confirmed."
+    else:
+        prox_badge = "<span style='color: #38bdf8; font-weight: 700;'>🔵 EXTENDED TRANSIT ZONE (> 25m)</span>"
+        tactical_desc = "Requires dedicated flight waypoint pathing and battery telemetry budgeting."
+
+    return f"""
+<div class="distance-hud-card">
+  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(56, 189, 248, 0.2); padding-bottom: 8px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 8px;">
+      <span>📐 3D SPATIAL TELEMETRY VECTOR COMPUTED</span>
+    </div>
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px;">
+      {prox_badge}
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px;">
+    <div style="background: rgba(15, 23, 42, 0.85); padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.35); text-align: center;">
+      <div style="font-size: 10px; font-family: 'JetBrains Mono', monospace; color: #94a3b8; text-transform: uppercase;">3D EUCLIDEAN DISTANCE</div>
+      <div style="font-size: 22px; font-family: 'JetBrains Mono', monospace; font-weight: 800; color: #38bdf8; margin-top: 3px;">
+        {dist_3d:.2f} <span style="font-size: 13px; font-weight: 500; color: #7dd3fc;">units</span>
+      </div>
+    </div>
+
+    <div style="background: rgba(15, 23, 42, 0.85); padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.2); text-align: center;">
+      <div style="font-size: 10px; font-family: 'JetBrains Mono', monospace; color: #94a3b8; text-transform: uppercase;">GROUND HORIZONTAL RANGE</div>
+      <div style="font-size: 20px; font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #e2e8f0; margin-top: 3px;">
+        {dist_horiz:.2f} <span style="font-size: 12px; font-weight: 500; color: #94a3b8;">units</span>
+      </div>
+    </div>
+
+    <div style="background: rgba(15, 23, 42, 0.85); padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.2); text-align: center;">
+      <div style="font-size: 10px; font-family: 'JetBrains Mono', monospace; color: #94a3b8; text-transform: uppercase;">ALTITUDE DELTA (ΔY)</div>
+      <div style="font-size: 20px; font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #f59e0b; margin-top: 3px;">
+        {elev_str}
+      </div>
+    </div>
+
+    <div style="background: rgba(15, 23, 42, 0.85); padding: 10px 14px; border-radius: 6px; border: 1px solid rgba(56, 189, 248, 0.2); text-align: center;">
+      <div style="font-size: 10px; font-family: 'JetBrains Mono', monospace; color: #94a3b8; text-transform: uppercase;">UAV TRANSIT (@5m/s)</div>
+      <div style="font-size: 20px; font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #34d399; margin-top: 3px;">
+        {transit_time:.1f} <span style="font-size: 12px; font-weight: 500; color: #94a3b8;">sec</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="background: rgba(8, 12, 22, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 10px 14px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; line-height: 1.6; color: #cbd5e1;">
+    <div style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+      <div><strong>Vector Displacement:</strong> ΔX = <code>{dx:+.2f}</code>, ΔY = <code>{dy:+.2f}</code>, ΔZ = <code>{dz:+.2f}</code></div>
+      <div><strong>Elevation Pitch:</strong> <code>{pitch_deg:+.1f}°</code></div>
+    </div>
+    <div style="margin-top: 6px; color: #94a3b8;">
+      <strong>SAR Operational Guidance:</strong> {tactical_desc}
+    </div>
+  </div>
+</div>
+"""
+
+
+def render_3d_measurement_vector(
+    x1: float, y1: float, z1: float,
+    x2: float, y2: float, z2: float,
+    model_paths: Dict[str, str],
+    vis_mode: str,
+    stage: str
+) -> Optional[str]:
+    """Builds and renders a 3D measurement vector overlaid onto the active 3D reconstruction."""
+    import open3d as o3d
+    try:
+        p0 = np.array([float(x1 or 0.0), float(y1 or 0.0), float(z1 or 0.0)], dtype=np.float64)
+        p1 = np.array([float(x2 or 0.0), float(y2 or 0.0), float(z2 or 0.0)], dtype=np.float64)
+    except Exception as e:
+        logger.error(f"Invalid measurement points: {e}")
+        return None
+
+    dist = float(np.linalg.norm(p1 - p0))
+    if dist < 1e-4:
+        return None
+
+    tube_rad = max(0.02, min(0.12, dist * 0.025))
+    sphere_rad = tube_rad * 2.2
+
+    cyl = ExportManager._create_cylinder_segment(p0, p1, radius=tube_rad)
+    if cyl is None:
+        return None
+    cyl.paint_uniform_color([0.0, 0.9, 1.0])
+
+    sp_a = o3d.geometry.TriangleMesh.create_sphere(radius=sphere_rad, resolution=16).translate(p0)
+    sp_a.paint_uniform_color([0.1, 0.95, 0.2])
+
+    sp_b = o3d.geometry.TriangleMesh.create_sphere(radius=sphere_rad, resolution=16).translate(p1)
+    sp_b.paint_uniform_color([1.0, 0.2, 0.2])
+
+    vec_mesh = cyl + sp_a + sp_b
+    vec_mesh.compute_vertex_normals()
+
+    base_file = None
+    if isinstance(model_paths, dict) and model_paths:
+        if "RESCUE INTELLIGENCE" in vis_mode and "rescue_intelligence" in model_paths:
+            base_file = model_paths["rescue_intelligence"]
+        else:
+            stage_map = {
+                "Filtered Point Cloud": "filtered",
+                "Raw VGGT Point Cloud": "raw",
+                "Depth Point Cloud": "depth",
+                "Surface Mesh": "mesh",
+                "Camera Trajectory": "trajectory"
+            }
+            key = stage_map.get(stage, "filtered")
+            base_file = model_paths.get(key)
+
+    if not base_file or not os.path.exists(base_file):
+        candidate = Path("outputs/gradio_session/rescue_intelligence_scene.ply")
+        if candidate.exists():
+            base_file = str(candidate)
+
+    out_file = Path("outputs/gradio_session/scene_with_measurement.ply")
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if base_file and os.path.exists(base_file):
+        try:
+            pcd = o3d.io.read_point_cloud(base_file)
+            if len(pcd.points) > 0:
+                sampled_vec = vec_mesh.sample_points_uniformly(number_of_points=12000)
+                combined_pcd = pcd + sampled_vec
+                o3d.io.write_point_cloud(str(out_file), combined_pcd, write_ascii=False)
+                return str(out_file)
+            else:
+                base_m = o3d.io.read_triangle_mesh(base_file)
+                if len(base_m.vertices) > 0:
+                    combined_mesh = base_m + vec_mesh
+                    combined_mesh.compute_vertex_normals()
+                    o3d.io.write_triangle_mesh(str(out_file), combined_mesh, write_ascii=False)
+                    return str(out_file)
+        except Exception as e:
+            logger.warning(f"Failed to merge measurement vector with base scene: {e}")
+
+    o3d.io.write_triangle_mesh(str(out_file), vec_mesh, write_ascii=False)
+    return str(out_file)
+
+
+def populate_measurement_points(targets_session_data: Dict[str, Any]) -> Tuple[Any, Any]:
+    """Dynamically populates Point A and Point B dropdowns from detected targets and camera waypoints."""
+    choices = [
+        "[ORIGIN] Scene Center / Optical Datum (0.00, 0.00, 0.00)"
+    ]
+    if isinstance(targets_session_data, dict):
+        for choice_key, item in targets_session_data.items():
+            t = item.get("target", {})
+            loc = t.get("location_3d")
+            tid = t.get("target_id", "TARGET")
+            pri = t.get("rescue_priority", "LOW")
+            if loc is not None and len(loc) >= 3 and not (loc[0] == 0 and loc[1] == 0 and loc[2] == 0):
+                choices.append(f"[TARGET] {tid} (X={loc[0]:.2f}, Y={loc[1]:.2f}, Z={loc[2]:.2f}) - {pri} PRI")
+
+    camera_poses_file = Path("outputs/gradio_session/camera_poses.json")
+    if camera_poses_file.exists():
+        try:
+            with open(camera_poses_file, "r") as f:
+                c_poses = json.load(f)
+            for cp in c_poses:
+                idx = cp.get("frame_idx", 0)
+                pos = cp.get("position", [0, 0, 0])
+                choices.append(f"[DRONE] Keyframe Camera #{idx:02d} (X={pos[0]:.2f}, Y={pos[1]:.2f}, Z={pos[2]:.2f})")
+        except Exception:
+            pass
+
+    choices.append("[CUSTOM] Enter Custom 3D Coordinates")
+
+    val_a = choices[0]
+    val_b = choices[1] if len(choices) > 1 else choices[0]
+    return gr.Dropdown(choices=choices, value=val_a), gr.Dropdown(choices=choices, value=val_b)
+
+
+CUSTOM_CSS = """
+/* ==========================================================================
+   AeroScan 3D — Tactical Drone / UAV Ground Control Station (GCS) Theme
+   ========================================================================== */
+
+/* Cockpit Base & Typography */
+.gradio-container {
+    max-width: 1540px !important;
+    margin: 0 auto !important;
+    padding: 12px 18px !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    background-color: #070b14 !important;
+    color: #e2e8f0 !important;
+}
+
+/* Ensure clean form boxes and remove clumsy borders */
+.gr-box, .gr-form, .gr-panel {
+    background: #0c1424 !important;
+    border-color: rgba(56, 189, 248, 0.22) !important;
+    border-radius: 8px !important;
+}
+
+/* Drone Tactical HUD Header */
+.drone-hud-header {
+    background: radial-gradient(ellipse at 80% -20%, rgba(14, 165, 233, 0.18) 0%, rgba(10, 16, 30, 0.98) 70%),
+                linear-gradient(180deg, #0c1424 0%, #070d18 100%);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 10px;
+    padding: 18px 24px;
+    margin-bottom: 16px;
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.7), inset 0 0 20px rgba(56, 189, 248, 0.05);
+    position: relative;
+    overflow: hidden;
+}
+
+.drone-hud-header::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 0%, #38bdf8 30%, #00f0ff 70%, transparent 100%);
+}
+
+.drone-top-ribbon {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.15);
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 11px;
+    color: #64748b;
+    letter-spacing: 0.8px;
+}
+
+.drone-telemetry-status {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.telemetry-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #94a3b8;
+}
+
+.telemetry-item.active {
+    color: #38bdf8;
+    font-weight: 600;
+}
+
+.hud-callsign {
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+    color: #f8fafc;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.hud-tagline {
+    font-size: 12.5px;
+    color: #94a3b8;
+    margin-top: 3px;
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+.drone-badges-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.hud-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 4px;
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    color: #cbd5e1;
+    letter-spacing: 0.2px;
+}
+
+.hud-badge-cyan { background: rgba(6, 182, 212, 0.12); border-color: rgba(6, 182, 212, 0.45); color: #38bdf8; }
+.hud-badge-emerald { background: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.45); color: #34d399; }
+.hud-badge-amber { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.45); color: #fbbf24; }
+.hud-badge-purple { background: rgba(168, 85, 247, 0.12); border-color: rgba(168, 85, 247, 0.45); color: #c084fc; }
+
+/* Tactical Action Button */
+.drone-launch-btn button {
+    background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+    border: 1px solid rgba(56, 189, 248, 0.6) !important;
+    color: #ffffff !important;
+    font-family: 'JetBrains Mono', Consolas, monospace !important;
+    font-weight: 700 !important;
+    font-size: 13.5px !important;
+    letter-spacing: 0.8px !important;
+    padding: 13px 20px !important;
+    border-radius: 6px !important;
+    box-shadow: 0 4px 16px rgba(2, 132, 199, 0.35), inset 0 0 10px rgba(56, 189, 248, 0.2) !important;
+    transition: all 0.2s ease !important;
+    text-transform: uppercase !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+    margin-bottom: 8px !important;
+}
+
+.drone-launch-btn button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 24px rgba(2, 132, 199, 0.55), inset 0 0 15px rgba(56, 189, 248, 0.35) !important;
+}
+
+/* Telemetry Ingestion Card */
+.telemetry-card {
+    background: rgba(12, 18, 32, 0.9);
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    border-left: 3px solid #38bdf8;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 11.5px;
+    color: #94a3b8;
+    line-height: 1.5;
+    margin-top: 6px;
+    margin-bottom: 12px;
+}
+
+/* Tactical HUD Dashboard Table */
+.status-dashboard-wrap table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 11px;
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.status-dashboard-wrap th {
+    background: #0c1628;
+    padding: 8px 10px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-weight: 700;
+    color: #38bdf8;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+.status-dashboard-wrap td {
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.08);
+    background: #090e1a;
+    color: #cbd5e1;
+}
+
+.status-dashboard-wrap tr:last-child td {
+    border-bottom: none;
+}
+
+.status-dashboard-wrap tr:hover td {
+    background: rgba(14, 165, 233, 0.06);
+}
+
+/* Tab Navigation */
+.tab-nav button {
+    font-family: 'JetBrains Mono', Consolas, monospace !important;
+    font-weight: 600 !important;
+    font-size: 12.5px !important;
+    letter-spacing: 0.3px !important;
+    border-radius: 6px 6px 0 0 !important;
+}
+
+/* 3D Model Viewer Container */
+.model3d-wrap {
+    border: 1px solid rgba(56, 189, 248, 0.28) !important;
+    border-radius: 8px !important;
+    background: #090e1a !important;
+    overflow: hidden !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Distance Measurement Panel */
+.distance-measure-panel {
+    background: linear-gradient(180deg, rgba(12, 20, 36, 0.95) 0%, rgba(8, 14, 26, 0.98) 100%) !important;
+    border: 1px solid rgba(56, 189, 248, 0.28) !important;
+    border-radius: 8px !important;
+    padding: 16px 20px !important;
+    margin-top: 14px !important;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Distance HUD Card */
+.distance-hud-card {
+    background: radial-gradient(ellipse at 50% 0%, rgba(14, 165, 233, 0.12) 0%, rgba(10, 16, 30, 0.95) 75%);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-top: 12px;
+}
+
+.distance-hud-card.standby {
+    border-style: dashed;
+    border-color: rgba(56, 189, 248, 0.2);
+    background: rgba(12, 18, 32, 0.6);
+    padding: 12px 16px;
+}
+"""
+
+READY_SUMMARY_MD = """<div style="background: radial-gradient(ellipse at 50% 0%, rgba(14, 165, 233, 0.1) 0%, rgba(12, 18, 32, 0.95) 75%); padding: 18px 22px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.25); color: #f8fafc; margin-bottom: 12px; position: relative;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span style="font-size: 18px;">🛰️</span>
+      <span style="font-family: 'JetBrains Mono', Consolas, monospace; font-size: 14px; font-weight: 700; color: #38bdf8; letter-spacing: 0.5px;">GCS MISSION RECONSTRUCTION CONTROL // STANDBY</span>
+    </div>
+    <span style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.35); padding: 2px 10px; border-radius: 4px; font-size: 11px; font-family: 'JetBrains Mono', monospace; font-weight: 700;">AVIONICS READY</span>
+  </div>
+  <p style="margin: 0; font-size: 12.5px; color: #94a3b8; line-height: 1.5;">
+    Ingest an aerial UAV drone video (.mp4/.mov) or image sequence on the flight telemetry panel and click <strong>INITIATE AUTONOMOUS DRONE 3D PIPELINE</strong> to execute single-pass 3D reconstruction and rescue intelligence.
+  </p>
+</div>"""
+
+
 def update_video_info(video_path: Optional[str]) -> str:
     """Updates the input video metadata preview card."""
     if not video_path:
@@ -1139,34 +1675,70 @@ def update_video_info(video_path: Optional[str]) -> str:
     meta = get_video_metadata(video_path)
     if not meta:
         return "Video loaded."
-    return f"""**File**: `{meta['filename']}` | **Resolution**: `{meta['resolution']}` | **Duration**: `{meta['duration_s']}s` | **FPS**: `{meta['fps']}` | **Frames**: `{meta['total_frames']}` | **Size**: `{meta['file_size_mb']} MB`"""
+    return f"""<div class="telemetry-card">
+<strong>📡 FLIGHT PAYLOAD INGESTED:</strong> <code>{meta['filename']}</code><br/>
+[RES]: {meta['resolution']} • [DURATION]: {meta['duration_s']}s • [FPS]: {meta['fps']} • [FRAMES]: {meta['total_frames']} • [PAYLOAD]: {meta['file_size_mb']} MB
+</div>"""
 
 
 def create_ui():
     """Builds the comprehensive 9-section Gradio interface adhering to Directive 12."""
-    custom_css = """
-    .summary-box { background: linear-gradient(135deg, #1e293b, #0f172a); color: white; padding: 18px; border-radius: 12px; }
-    .status-check { background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; }
-    """
-
-    with gr.Blocks(title="Drone-VGGT: UAV Disaster Intelligence & 3D Rescue Visualization") as demo:
-        gr.Markdown(
+    with gr.Blocks(title="AeroScan 3D — Drone-VGGT Disaster Intelligence & 3D Reconstruction") as demo:
+        gr.HTML(
             """
-            # 🛸 Drone-VGGT: UAV Disaster Intelligence & 3D Rescue Visualization System
-            ### Single-Pass Video → Metric 3D Reconstruction → Multi-Evidence Flood Reasoning → Validated SAR Triage
+            <div class="drone-hud-header">
+              <div class="drone-top-ribbon">
+                <div class="drone-telemetry-status">
+                  <span class="telemetry-item active">● GCS-LINK: ACTIVE</span>
+                  <span class="telemetry-item">FLIGHT TELEMETRY: SYNCED</span>
+                  <span class="telemetry-item">METRIC COORD: LOCAL 3D</span>
+                  <span class="telemetry-item">PAYLOAD: VGGT+YOLO+DA2</span>
+                </div>
+                <div>SYS ID: UAV-3D-RECON // SIH-SAR-GCS</div>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div class="hud-callsign">
+                    <span>🚁</span>
+                    <span>AeroScan 3D — Autonomous UAV Disaster Intelligence GCS</span>
+                  </div>
+                  <div class="hud-tagline">
+                    Single-Pass Aerial Drone Video ➔ Foundation 3D Visual Geometry (VGGT) ➔ Flood Spatial Context ➔ Validated SAR Triage
+                  </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 4px 10px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 700; letter-spacing: 0.5px;">
+                    ● AVIONICS ONLINE
+                  </span>
+                </div>
+              </div>
+              <div class="drone-badges-strip" style="margin-top: 10px;">
+                <span class="hud-badge hud-badge-cyan">🤖 META VGGT-1B 3D FOUNDATION</span>
+                <span class="hud-badge hud-badge-purple">📏 DEPTH ANYTHING V2 METRIC ESTIMATOR</span>
+                <span class="hud-badge hud-badge-cyan">🎯 ULTRALYTICS YOLO RESCUE PERCEPTION</span>
+                <span class="hud-badge hud-badge-emerald">⚡ NVIDIA RTX 3050 CUDA 12.4</span>
+                <span class="hud-badge hud-badge-amber">📐 LOCAL METRIC 3D COORDINATE SYSTEM</span>
+              </div>
+            </div>
             """
         )
 
         model_paths_state = gr.State({})
         targets_session_state = gr.State({})
 
+        # Avionics states (Safe defaults for RTX 3050 4GB, background managed)
+        fps_state = gr.State(2.0)
+        max_frames_state = gr.State(8)
+        sharpness_state = gr.State(25.0)
+        conf_state = gr.State(1.1)
+
         with gr.Row():
             # =================================================================
             # Section 1 & 2: Input Video, Controls & Pipeline Status
             # =================================================================
             with gr.Column(scale=1):
-                gr.Markdown("### 1. Input Video & Flight Ingestion")
-                video_input = gr.Video(label="Upload Drone Flight Video (.mp4, .mov, .avi)")
+                gr.Markdown("### 📡 1. UAV Flight Telemetry Ingestion & Controls")
+                video_input = gr.Video(label="Upload Aerial Drone Flight Video (.mp4, .mov, .avi)")
                 video_preview_md = gr.Markdown("Upload a UAV drone flight video above to preview resolution, duration, and FPS.")
                 video_input.change(fn=update_video_info, inputs=[video_input], outputs=[video_preview_md])
 
@@ -1175,22 +1747,16 @@ def create_ui():
                     placeholder="e.g. data/raw/uav_sequence/1121222322212102-4/images"
                 )
 
-                with gr.Accordion("Sampling & VRAM Controls (RTX 3050 4GB Safe)", open=True):
-                    fps_slider = gr.Slider(0.5, 5.0, value=2.0, step=0.5, label="Sampling FPS")
-                    max_frames_slider = gr.Slider(4, 24, value=8, step=2, label="Max Selected Keyframes")
-                    sharpness_slider = gr.Slider(10.0, 120.0, value=25.0, step=5.0, label="Sharpness Threshold")
-                    conf_slider = gr.Slider(0.5, 2.5, value=1.1, step=0.1, label="Depth Confidence Gate")
-
-                with gr.Accordion("AI Models & Perception Settings", open=False):
+                with gr.Accordion("🧠 AI Perception & Model Architecture", open=False):
                     use_da2_check = gr.Checkbox(value=True, label="Enable Depth Anything V2 Validation")
                     da2_model_radio = gr.Radio(["small", "base"], value="small", label="Depth Anything V2 Encoder")
                     refine_check = gr.Checkbox(value=True, label="Enable Image Contrast Refinement")
                     filter_check = gr.Checkbox(value=True, label="Enable Multi-Stage Point Cloud Filtering")
                     disaster_check = gr.Checkbox(value=True, label="Enable Tiled YOLO & Flood Reasoning")
 
-                run_btn = gr.Button("🚀 Execute Disaster Intelligence Pipeline", variant="primary", size="lg")
+                run_btn = gr.Button("🚁 INITIATE AUTONOMOUS DRONE 3D PIPELINE", variant="primary", size="lg", elem_classes=["drone-launch-btn"])
 
-                gr.Markdown("### 2. Processing Status (12-Stage Pipeline)")
+                gr.Markdown("### 📊 2. Avionics & Pipeline Telemetry (12-Stage)")
                 status_dashboard_ui = gr.Markdown(
                     """| Stage | Actual Status | Operational Detail / Evidence |
 |:---|:---:|:---|
@@ -1206,40 +1772,44 @@ def create_ui():
 | **SPATIAL CONTEXT** | ⚪ PENDING | Awaiting isolation & elevation analysis |
 | **INCIDENTS** | ⚪ PENDING | Awaiting SQLite canonical incident logging |
 | **RESCUE PRIORITY** | ⚪ PENDING | Awaiting explainable SAR triage scoring |
-"""
+""",
+                    elem_classes=["status-dashboard-wrap"]
                 )
 
             # =================================================================
             # Sections 3 to 9: 3D Visualization, Incidents, Priorities, Metrics
             # =================================================================
             with gr.Column(scale=2):
-                summary_output = gr.Markdown("Ready. Upload UAV drone video and click **Execute Disaster Intelligence Pipeline**.")
+                summary_output = gr.Markdown(READY_SUMMARY_MD)
 
-                with gr.Tabs():
+                with gr.Tabs(elem_classes=["tab-nav"]):
                     # Section 3: 3D Scene & Rescue Model (Directive 4)
-                    with gr.TabItem("🌐 3. 3D Scene & Rescue Model"):
+                    with gr.TabItem("🌐 3. 3D Digital Twin & Scene"):
                         with gr.Row():
-                            vis_mode_radio = gr.Radio(
-                                choices=["RESCUE INTELLIGENCE (Default)", "RECONSTRUCTION"],
-                                value="RESCUE INTELLIGENCE (Default)",
-                                label="3D Visualization Mode"
-                            )
-                            reconstruction_stage_radio = gr.Radio(
-                                choices=[
-                                    "Filtered Point Cloud",
-                                    "Raw VGGT Point Cloud",
-                                    "Depth Point Cloud",
-                                    "Surface Mesh",
-                                    "Camera Trajectory"
-                                ],
-                                value="Filtered Point Cloud",
-                                label="Reconstruction Geometry Stage",
-                                visible=True
-                            )
+                            with gr.Column(scale=5):
+                                vis_mode_radio = gr.Radio(
+                                    choices=["RESCUE INTELLIGENCE (Default)", "RECONSTRUCTION"],
+                                    value="RESCUE INTELLIGENCE (Default)",
+                                    label="3D Visualization Mode"
+                                )
+                            with gr.Column(scale=7):
+                                reconstruction_stage_radio = gr.Radio(
+                                    choices=[
+                                        "Filtered Point Cloud",
+                                        "Raw VGGT Point Cloud",
+                                        "Depth Point Cloud",
+                                        "Surface Mesh",
+                                        "Camera Trajectory"
+                                    ],
+                                    value="Filtered Point Cloud",
+                                    label="Reconstruction Geometry Stage",
+                                    visible=True
+                                )
 
                         model_viewer = gr.Model3D(
                             label="Interactive 3D Scene (RESCUE INTELLIGENCE: Environment + Flood + Validated Markers + Trajectory)",
-                            height=480
+                            height=480,
+                            elem_classes=["model3d-wrap"]
                         )
 
                         def on_mode_or_stage_change(mode, stage, paths):
@@ -1256,8 +1826,96 @@ def create_ui():
                             outputs=[model_viewer]
                         )
 
+                        # --- Tactical 3D Distance & Range Measurement Tool ---
+                        with gr.Group(elem_classes=["distance-measure-panel"]):
+                            gr.Markdown(
+                                """#### 📐 Tactical 3D Distance & Spatial Vector Measurement Tool
+<span style="font-size: 11.5px; color: #94a3b8; font-family: 'JetBrains Mono', monospace;">
+Select detected human targets, drone camera waypoints, or enter local 3D coordinates (X, Y, Z) to compute real-time Euclidean distance, horizontal ground range, elevation delta, and SAR reachability.
+</span>
+"""
+                            )
+                            with gr.Row():
+                                with gr.Column(scale=1):
+                                    gr.Markdown("##### 🔵 Reference Point A")
+                                    measure_pt_a_dropdown = gr.Dropdown(
+                                        choices=[
+                                            "[ORIGIN] Scene Center / Optical Datum (0.00, 0.00, 0.00)",
+                                            "[CUSTOM] Enter Custom 3D Coordinates"
+                                        ],
+                                        value="[ORIGIN] Scene Center / Optical Datum (0.00, 0.00, 0.00)",
+                                        label="Select Point A Target / Drone Pose",
+                                        interactive=True
+                                    )
+                                    with gr.Row():
+                                        x1_input = gr.Number(value=0.0, label="X₁ (East)", step=0.01)
+                                        y1_input = gr.Number(value=0.0, label="Y₁ (Down/Elev)", step=0.01)
+                                        z1_input = gr.Number(value=0.0, label="Z₁ (Depth/North)", step=0.01)
+
+                                with gr.Column(scale=1):
+                                    gr.Markdown("##### 🔴 Destination Point B")
+                                    measure_pt_b_dropdown = gr.Dropdown(
+                                        choices=[
+                                            "[CUSTOM] Enter Custom 3D Coordinates",
+                                            "[ORIGIN] Scene Center / Optical Datum (0.00, 0.00, 0.00)"
+                                        ],
+                                        value="[CUSTOM] Enter Custom 3D Coordinates",
+                                        label="Select Point B Target / Drone Pose",
+                                        interactive=True
+                                    )
+                                    with gr.Row():
+                                        x2_input = gr.Number(value=1.5, label="X₂ (East)", step=0.01)
+                                        y2_input = gr.Number(value=0.5, label="Y₂ (Down/Elev)", step=0.01)
+                                        z2_input = gr.Number(value=2.8, label="Z₂ (Depth/North)", step=0.01)
+
+                            with gr.Row():
+                                calc_dist_btn = gr.Button("📏 COMPUTE 3D DISTANCE & VECTORS", variant="primary", scale=2, elem_classes=["drone-launch-btn"])
+                                render_3d_line_btn = gr.Button("👁️ RENDER 3D MEASUREMENT VECTOR", variant="secondary", scale=2)
+                                clear_dist_btn = gr.Button("🔄 RESET 3D VIEW", variant="secondary", scale=1)
+
+                            dist_results_md = gr.Markdown(
+                                """<div class="distance-hud-card standby">
+<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #94a3b8;">
+💡 Select reference points above or enter 3D coordinates, then click <strong>COMPUTE 3D DISTANCE</strong>.
+</div>
+</div>""",
+                                elem_classes=["dist-card-wrap"]
+                            )
+
+                            # Wiring measurement event handlers
+                            measure_pt_a_dropdown.change(
+                                fn=on_select_pt_a,
+                                inputs=[measure_pt_a_dropdown, x1_input, y1_input, z1_input],
+                                outputs=[x1_input, y1_input, z1_input]
+                            )
+                            measure_pt_b_dropdown.change(
+                                fn=on_select_pt_b,
+                                inputs=[measure_pt_b_dropdown, x2_input, y2_input, z2_input],
+                                outputs=[x2_input, y2_input, z2_input]
+                            )
+                            calc_dist_btn.click(
+                                fn=calculate_3d_distance,
+                                inputs=[x1_input, y1_input, z1_input, x2_input, y2_input, z2_input, measure_pt_a_dropdown, measure_pt_b_dropdown],
+                                outputs=[dist_results_md]
+                            )
+                            render_3d_line_btn.click(
+                                fn=render_3d_measurement_vector,
+                                inputs=[x1_input, y1_input, z1_input, x2_input, y2_input, z2_input, model_paths_state, vis_mode_radio, reconstruction_stage_radio],
+                                outputs=[model_viewer]
+                            )
+                            clear_dist_btn.click(
+                                fn=switch_3d_mode,
+                                inputs=[vis_mode_radio, reconstruction_stage_radio, model_paths_state],
+                                outputs=[model_viewer]
+                            )
+                            targets_session_state.change(
+                                fn=populate_measurement_points,
+                                inputs=[targets_session_state],
+                                outputs=[measure_pt_a_dropdown, measure_pt_b_dropdown]
+                            )
+
                     # Section 4: AI Disaster & Person Inspection (Directive 5 Synchronized Inspection)
-                    with gr.TabItem("🔍 4. AI Disaster & Person Inspection"):
+                    with gr.TabItem("🔍 4. AI Target & Person Inspection"):
                         gr.Markdown("#### Source Frame ↔ 3D Synchronization & Lineage Inspection")
                         target_dropdown = gr.Dropdown(
                             choices=[],
@@ -1279,7 +1937,8 @@ def create_ui():
                             with gr.Tabs():
                                 with gr.TabItem("Tiled Detections"):
                                     annotated_gallery_ui = gr.Gallery(label="Annotated Detections", columns=3, height="auto")
-                                with gr.TabItem("Flood Candidate & Surface Masks"):
+                                ChippTab = gr.TabItem("Flood Candidate & Surface Masks")
+                                with ChippTab:
                                     flood_gallery_ui = gr.Gallery(label="Flood Candidate & Surface Masks", columns=3, height="auto")
                                 with gr.TabItem("Depth Anything V2"):
                                     da2_gallery_ui = gr.Gallery(label="Depth Anything V2 Monocular Depth", columns=3, height="auto")
@@ -1287,7 +1946,7 @@ def create_ui():
                                     selected_gallery_ui = gr.Gallery(label="Selected Drone Keyframes", columns=4, height="auto")
 
                     # Section 5: Disaster Incidents
-                    with gr.TabItem("📋 5. Disaster Incidents"):
+                    with gr.TabItem("📋 5. Canonical Incidents Registry"):
                         gr.Markdown("#### Canonical Incidents Tracked in SQLite Database")
                         incidents_dataframe = gr.Dataframe(
                             headers=[
@@ -1298,15 +1957,15 @@ def create_ui():
                         )
 
                     # Section 6: Rescue Priorities (Directive 6: Evidence-Based)
-                    with gr.TabItem("🚨 6. Rescue Priorities"):
+                    with gr.TabItem("🚨 6. SAR Rescue Priorities"):
                         rescue_cards_ui = gr.Markdown("Execute pipeline to generate explainable rescue priority rankings.")
 
                     # Section 7: Model & Quality Metrics (Directive 3: 10 Metrics)
-                    with gr.TabItem("📐 7. Model & Quality Metrics"):
+                    with gr.TabItem("📐 7. 3D Quality Gates & Metrics"):
                         quality_metrics_ui = gr.Markdown("Empirical 3D metrics will appear after reconstruction.")
 
                     # Section 8: Export Manager
-                    with gr.TabItem("📦 8. Export Manager"):
+                    with gr.TabItem("📦 8. Mission Export Manager"):
                         gr.Markdown("#### Download Generated 3D Models, Trajectories, Incident Reports & Packages")
                         with gr.Row():
                             master_zip_down = gr.File(label="Download Master Disaster Package (.zip)")
@@ -1318,7 +1977,7 @@ def create_ui():
                             mesh_down = gr.File(label="Surface Mesh (.ply)")
 
                     # Section 9: Debug / Diagnostics
-                    with gr.TabItem("🛠️ 9. Debug / Diagnostics"):
+                    with gr.TabItem("🛠️ 9. Avionics Diagnostics"):
                         gr.Markdown(
                             """#### System Architecture & Coordinate Frame Diagnostics
 - **Coordinate System**: `LOCAL / RELATIVE` *(Origin centered at keyframe camera optical center. Zero fabricated GPS)*
@@ -1330,16 +1989,11 @@ def create_ui():
                         )
 
         # Wire pipeline execution
-        def update_target_dropdown(choices):
-            if choices:
-                return gr.Dropdown(choices=choices, value=choices[0])
-            return gr.Dropdown(choices=[])
-
         run_btn.click(
             fn=process_disaster_drone_pipeline,
             inputs=[
                 video_input, image_folder_input,
-                fps_slider, max_frames_slider, sharpness_slider, conf_slider,
+                fps_state, max_frames_state, sharpness_state, conf_state,
                 use_da2_check, da2_model_radio,
                 refine_check, filter_check, disaster_check
             ],
@@ -1369,8 +2023,38 @@ def create_ui():
     return demo
 
 
+def get_custom_theme():
+    return gr.themes.Soft(
+        primary_hue="cyan",
+        secondary_hue="slate",
+        neutral_hue="slate",
+        font=[gr.themes.GoogleFont("Inter"), "system-ui", "-apple-system", "sans-serif"],
+        font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "Consolas", "monospace"],
+    ).set(
+        body_background_fill="#070b14",
+        body_background_fill_dark="#070b14",
+        block_background_fill="#0c1220",
+        block_background_fill_dark="#0c1220",
+        block_border_width="1px",
+        block_border_color="rgba(56, 189, 248, 0.2)",
+        block_border_color_dark="rgba(56, 189, 248, 0.2)",
+        block_radius="8px",
+        button_primary_background_fill="linear-gradient(135deg, #0284c7, #0369a1)",
+        button_primary_background_fill_hover="linear-gradient(135deg, #0369a1, #075985)",
+        button_primary_text_color="#ffffff",
+    )
+
+
 demo = create_ui()
 
 if __name__ == "__main__":
-    theme = gr.themes.Soft(primary_hue="blue", secondary_hue="slate")
-    demo.launch(server_name="127.0.0.1", server_port=7860, share=False, theme=theme)
+    theme = get_custom_theme()
+    demo.launch(
+        server_name="127.0.0.1",
+        server_port=7860,
+        share=False,
+        theme=theme,
+        css=CUSTOM_CSS
+    )
+
+

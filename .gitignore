@@ -1,96 +1,60 @@
-# ==============================================================================
-# Git Ignore for Drone VGGT & SIH Disaster Inspection System
-# ==============================================================================
-
-# Python Environments & Caches
+# Environment
 drone_vggt_env/
 env/
 venv/
 .venv/
-ENV/
-env.bak/
-venv.bak/
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+*.pyd
 .pytest_cache/
-.coverage
-htmlcov/
-*.log
 
-# Frontend & Node Dependencies / Build Artefacts
-node_modules/
-frontend/node_modules/
-frontend/.vite/
-frontend/dist/
-dist/
-build/
-.vite/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Deep Learning Models & Heavy Weights (>100MB / binary checkpoints)
-# (Models should be downloaded using scripts/download_models.py)
-models/
-*.pt
+# Model Checkpoints (large binary weights)
+models/VGGT-1B/*.pt
+models/VGGT-1B/*.bin
+models/VGGT-1B/*.safetensors
 *.pth
-*.ckpt
-*.safetensors
-*.bin
-*.onnx
+*.pt
 
-# Raw Drone Videos & Heavy Media Files
-data/raw/
-data/frames/
-data/refined_frames/
-data/selected_frames/
-data/uav_sequence/
-data/uav_finetune/
-data/uav_finetune_test/
-data/uploads/
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.webm
-
-# Output Artifacts & 3D Reconstructions
-output/
+# Data Archives & Large Raw Videos
+# Outputs & Generated Point Clouds / Meshes
+/output/
 outputs/
 *.ply
-*.ply.gz
-*.splat
 *.obj
+*.splat
+*.ply.gz
 *.glb
-*.gltf
-*.las
-*.laz
 
-# SQLite Databases & Session State
-*.sqlite3
-*.db
-*.db-journal
+# Data Uploads & Working Frames
+/data/uploads/
+/data/raw/
+/data/frames/
+/data/selected_frames/
+/data/yolo_hard_cases/
+data/raw/videos/*.mp4
+data/raw/videos/*.mov
+data/raw/videos/*.avi
+data/raw/frames/
+data/raw/uav_sequence/
 
-# Scratch & Temporary Run Dirs
-scratch/flooded_frames/
-scratch/sample_frames/
-scratch/*.ply
-tmp/
-temp/
+# Temporary directories & caches
+.pytest_cache/
+.pytest_cache_new/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# OS & Editor Files
+# Frontend leftovers & node_modules
+/frontend/
+
+# OS / IDE / Logs
 .DS_Store
 Thumbs.db
-Desktop.ini
 .vscode/
 .idea/
-*.swp
-*.swo
-
-# Large Archive Files
-*.tar.gz
-*.7z
-*.rar
+*.log
+*.mp4
 *.zip
-!vggt_uav_custom_files.zip
+

@@ -2,22 +2,22 @@
   "frame_id": "selected_00000.jpg",
   "frame_idx": 0,
   "track_id": 10,
-  "raw_yolo_class": "car",
-  "raw_yolo_confidence": 0.1852,
+  "raw_yolo_class": "truck",
+  "raw_yolo_confidence": 0.1608,
   "validated_class": "VEHICLE",
-  "validation_confidence": 0.1852,
-  "validation_evidence": "Vehicle geometry confirmed (area=608px, aspect=2.38, water overlap=0%).",
+  "validation_confidence": 0.1608,
+  "validation_evidence": "Vehicle geometry confirmed (area=5513px, aspect=4.03, water overlap=7%).",
   "original_bbox": [
-    1013,
-    223,
-    1051,
-    239
+    480,
+    452,
+    517,
+    601
   ],
   "cropped_bbox": [
-    1008,
-    221,
-    1056,
-    241
+    475,
+    430,
+    522,
+    623
   ],
   "image_width": 1280,
   "image_height": 720,
